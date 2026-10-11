@@ -128,6 +128,29 @@ The Sentinel-2 tab (`notebooks/02_sentinel2_layer.ipynb`, `processing/s2_pipelin
 
 ![Sentinel-2 U-Net flood-mapping output](assets/s2_output.png)
 
+### Evaluation against Dragonfly flood extent
+
+`notebooks/04_validation.ipynb` rebuilds the same Sentinel-1 `final_flood` as `01_sentinel1_layer.ipynb`, then scores it against the Dragonfly Data Science Hawke’s Bay flood polygons for **14 Feb 2023** ([data release](https://www.dragonfly.co.nz/news/2023-02-17-cyclone-gabrielle)). Urban and non-urban GeoPackages are merged, clipped to the AOI, and painted to a raster. **Permanent water is dropped on both maps** so the scores cover new inundation only.
+
+
+| Code       | Meaning                         |
+| ---------- | ------------------------------- |
+| TP (green) | Both maps flood                 |
+| FP (red)   | Sentinel-1 flood, Dragonfly dry |
+| FN (blue)  | Dragonfly flood, Sentinel-1 dry |
+| TN         | Both dry (not drawn)            |
+
+
+Pixel areas are summed at 20 m (`AREA_SCALE`). From those areas:
+
+`precision = TP / (TP + FP)` · `recall = TP / (TP + FN)` · `F1 = 2PR / (P + R)` · `IoU = TP / (TP + FP + FN)`
+
+This example is Cyclone Gabrielle, **±5 km at** `[-39.58, 176.88]`, event window 12–17 Feb 2023: **IoU = 0.74**, **F1 = 0.85**.
+
+![Agreement between Sentinel-1 flood and Dragonfly 14 Feb 2023 flood extent](outputs/validation/agreement.png)
+
+**Read this as method agreement, not ground-truth accuracy.** The Dragonfly 14 Feb layer is itself a Sentinel-1 product and is likely from the same 14 Feb ~07:07 UTC pass, so the scores are an **upper bound**. Reference products are model outputs, not field surveys. A second Dragonfly layer (19/21 Feb Sentinel-2 silt / slip / flood) is used only to check silt overlap with false alarms; that is not the flood accuracy score. Urban recall is near zero because flooded streets stay bright in SAR (double bounce), so a “darker than history” rule misses them.
+
 ---
 
 
@@ -368,6 +391,7 @@ Jobs usually take **several minutes**. `--reload` picks up Python changes; refre
 | LINZ building outlines ∩ flood (exposure count)                  | Project novelty (vector overlay)              |
 | OSM likely-closed roads ∩ flood (names, area, detour)            | Project novelty (notebook 5e + UI pipeline)   |
 | Fusion overlay                                                   | Project novelty                               |
+| Dragonfly flood polygons ∩ `final_flood` (IoU / F1)              | Project novelty (`04_validation.ipynb`)       |
 
 
 **Honesty line:** Lecture 6 classifies land vs water with **Random Forest on VV/VH**. This project's S1 notebook uses a **VV+VH water index**, **Otsu**, a **fixed dB cap**, and a **historical mean-WI change mask**, then WorldCover/JRC/DEM filters. That threshold-plus-change path is a project choice, not the lecture classifier.
@@ -389,6 +413,8 @@ GEOG761-GIS/
     01_sentinel1_layer.ipynb   # S1 flood reference (5d buildings, 5e OSM roads)
     02_sentinel2_layer.ipynb
     03_dem_layer.ipynb
+    04_validation.ipynb        # S1 vs Dragonfly flood / silt
+  outputs/validation/          # agreement map and score CSVs
   data/nz-building/            # local LINZ NZ Building Outlines (not committed)
   processing/                  # UI backend
     pipeline.py                # S1 flood flow (same as 01_)
