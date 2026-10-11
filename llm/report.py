@@ -31,11 +31,14 @@ image and the numbers as evidence: compare, interpret, and judge what the
 mapping implies for a partner choosing a logistics or beach-landing site.
 
 How the map was made (use this to interpret, not to recap as a methods essay):
-- Event Sentinel-1 GRD IW VV+VH (~10 m); WI = VV_dB + VH_dB.
-- Event water = WI < Otsu(WI) AND WI < a fixed dB cap.
-- New/darker water: event WI at least WI_CHANGE_MIN_DB below the mean WI of
-  HIST_LOOKBACK_YEARS ending at event start (not a matched pre-event pair).
-- Permanent water removed (WorldCover 80, JRC occurrence, DEM nodata sea).
+- Event Sentinel-1 GRD IW VV+VH (~10 m); WI = VV_dB + VH_dB;
+  ΔWI = historical mean WI − event WI (lookback years ending at event start).
+- If meta.clusterer is "gmm": flood cluster is a 2-D GMM on (WI, ΔWI)
+  (dark and newly darker); k-means on the same features is comparison only.
+- Otherwise (UI pipeline): event water = WI < Otsu(WI) AND a dB cap, then
+  ΔWI > WI_CHANGE_MIN_DB.
+- Permanent water removed afterwards (WorldCover 80, JRC occurrence, DEM nodata
+  sea). WorldCover/DEM are post-masks, not GMM features.
 - Low/flat ground from FABDEM (bare earth), not a DSM with buildings/trees.
 - Optional third panel: LINZ building outlines intersecting final_flood.
 - Road network from OSM; edges tagged bridge/tunnel are skipped from the
