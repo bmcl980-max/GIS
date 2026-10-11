@@ -93,16 +93,16 @@ OSM is used instead of LINZ Topo50 because drive edges form a **connected graph*
 5. **Detour.** Copy the graph, remove every likely-closed edge, then `networkx.shortest_path` between the endpoints of the longest flooded edge per name. If a path exists, extra metres versus the original edge are stored; if not, the AOI graph has no alternative (the road may still be reachable from outside the box).
 
 
-| Stat key                                        | Meaning                                         |
-| ----------------------------------------------- | ----------------------------------------------- |
-| `roads_in_aoi_km`                               | OSM drive centreline length in the AOI          |
-| `roads_flooded_km`                              | Centreline length intersecting `flood_boundary` |
-| `roads_flooded_area_km2`                        | Carriageway buffer ∩ flood, NZTM2000            |
-| `roads_likely_closed_edges`                     | Edges meeting the 50 m / 30% rule               |
-| `roads_likely_closed_names`                     | Count of unique OSM names among those edges     |
-| `roads_likely_closed_name_list`                 | Those names, longest flooded first              |
-| `roads_likely_unclosed_name_list`               | Remaining ground-road names, longest first      |
-| `roads_with_aoi_detour` / `roads_no_aoi_detour` | Names with / without an in-AOI alternative      |
+| Stat key                                        | Meaning                                                                                             |
+| ----------------------------------------------- | --------------------------------------------------------------------------------------------------- |
+| `roads_in_aoi_km`                               | OSM drive centreline length in the AOI                                                              |
+| `roads_flooded_km`                              | Centreline length intersecting `flood_boundary`                                                     |
+| `roads_flooded_area_km2`                        | Carriageway buffer ∩ flood, NZTM2000                                                                |
+| `roads_likely_closed_edges`                     | Edges meeting the 50 m / 30% rule                                                                   |
+| `roads_likely_closed_names`                     | Count of unique OSM names among those edges                                                         |
+| `roads_likely_closed_name_list`                 | Those names, longest flooded first                                                                  |
+| `roads_likely_unclosed_name_list`               | Remaining ground-road names, longest first                                                          |
+| `roads_with_aoi_detour` / `roads_no_aoi_detour` | Names with / without an in-AOI alternative                                                          |
 | `roads_detours`                                 | Per-name rows: flooded length, detour status, `detour_route` (named streets in order), extra metres |
 
 
@@ -121,6 +121,12 @@ SAR is used because it works through cloud (storms/cyclones). Sentinel-2 is a se
 The generated comparison figure is a **2 × 2** grid: Sentinel-1 VV (top left), water index with `final_flood` in yellow (top right), LINZ buildings ∩ flood (bottom left), OSM likely-closed vs likely-unclosed roads (bottom right).
 
 ![Sentinel-1 flood-mapping program output](assets/s1_outout3.png)
+
+### Example Sentinel-2 U-Net output
+
+The Sentinel-2 tab (`notebooks/02_sentinel2_layer.ipynb`, `processing/s2_pipeline.py`) produces a **1 × 3** figure from the first L1C scene on or after the peak date: event RGB with scale bar and north arrow (left), pretrained U-Net++ water (middle), and final flood = U-Net water minus permanent water on low / flat ground (right). This example is Cyclone Gabrielle, 14 Feb 2023 (~61% cloud). Parts of the cloud deck are labelled flood, so read optical results alongside the Sentinel-1 map.
+
+![Sentinel-2 U-Net flood-mapping output](assets/s2_output.png)
 
 ---
 
@@ -272,7 +278,7 @@ Tabs do not share form fields, Leaflet maps, or run state. Sentinel-1 uses `POST
 | Header     | Team name, optional logo, and tabs (**Sentinel-1 SAR** vs **Sentinel-2 U-Net**)                                                                                                                                                                                                                                    |
 | Left panel | Native date pickers (start, end, optional peak; default peak is the window midpoint). Half-width (km) for click-to-centre mode. **Max slope (°)** and **max elevation (m)** (defaults `SLOPE_MAX_DEG=10`, `ELEVATION_MAX_M=25`). Run button. Live **progress** under the button: bar, `Step n/10: …`, elapsed time |
 | Map        | OpenStreetMap. **Click** places a gold rectangle of ± half-width km. Leaflet.draw **rectangle** tool for a custom box. Selected bounds are shown as text                                                                                                                                                           |
-| Results    | Same 2×2 figure as notebook section 5c (LINZ buildings ∩ flood; OSM likely-closed vs unclosed roads), then a **Key Flood Statistics** table: flood area, share of AOI, buildings, flooded road length/area, likely-closed name count and names |
+| Results    | Same 2×2 figure as notebook section 5c (LINZ buildings ∩ flood; OSM likely-closed vs unclosed roads), then a **Key Flood Statistics** table: flood area, share of AOI, buildings, flooded road length/area, likely-closed name count and names                                                                     |
 
 
 Defaults match Cyclone Gabrielle at Hawke’s Bay Airport: 2023-02-01 → 2023-02-25, peak 2023-02-15, 5 km half-width, map centred at about `[-39.471, 176.869]`. Terrain defaults are **10°** max slope and **25 m** max elevation (`GET /api/defaults` loads these from `processing/defaults.py`).
