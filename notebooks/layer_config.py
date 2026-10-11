@@ -65,7 +65,7 @@ SENTINEL1_ENL = 4.9                # equivalent number of looks, IW GRD (for Lee
 # if WI < Otsu(WI) AND WI < this cap. Do not lower this just to drop runways.
 WATER_INDEX_MAX_DB = -32.0
 # Mean WI over this many years ending at START_DATE (event window excluded).
-HIST_LOOKBACK_YEARS = 2.0
+HIST_LOOKBACK_YEARS = 1.0
 # Flood-change cut: event WI must be at least this many dB below the historical
 # mean WI (WI = VV+VH, so ~2 dB per polarisation ≈ 4 dB here).
 WI_CHANGE_MIN_DB = 4.0
