@@ -2,7 +2,7 @@
 
 GEOG761 group project: mapping **flood and inundation extent** after a disaster, as the entry point for choosing a sea-logistics / HA-DR site.
 
-The Sentinel-1 notebook remains the lab-style reference. The map UI uses calendar dates and a Leaflet AOI, without editing `layer_config.py` for coordinates or dates. Flood is the **2-D GMM** cluster on event `WI` and historical `ΔWI` (dark **and** newly darker than a multi-year mean), not a single WI cut.
+The Sentinel-1 notebook (`01_sentinel1_layer.ipynb`) is the method of record. The map UI uses calendar dates and a Leaflet AOI, without editing `layer_config.py` for coordinates or dates. Flood is an **unsupervised 2-D GMM** cluster on event `WI` and historical `ΔWI` (dark **and** newly darker than a multi-year mean). That replaces the earlier 1-D **Otsu** cut on WI plus a fixed `ΔWI` dB threshold.
 
 ---
 
@@ -25,7 +25,7 @@ Selecting a suitable site for logistics supply from sea, immediately following a
 
 ## Observation and method
 
-**Mapping flood extent with Sentinel-1** (`notebooks/01_sentinel1_layer.ipynb`). Notebook AOI/dates still live in `notebooks/layer_config.py`. The UI does not use those date/coordinate fields; it sends them over HTTP. Terrain / MMU thresholds in `processing/defaults.py` match the notebook. The UI backend (`processing/pipeline.py`) still uses the older Otsu + `WI_CHANGE_MIN_DB` cuts until that path is ported.
+**Mapping flood extent with Sentinel-1** (`notebooks/01_sentinel1_layer.ipynb`). Notebook AOI/dates still live in `notebooks/layer_config.py`. The UI does not use those date/coordinate fields; it sends them over HTTP. Terrain / MMU thresholds in `processing/defaults.py` match the notebook. Flood pixels come from **unsupervised clustering** (GMM on the map; k-means as a comparison), not Otsu.
 
 **Inputs**
 
@@ -46,7 +46,7 @@ Selecting a suitable site for logistics supply from sea, immediately following a
 
 1. **Prep** — clip to a rectangular AOI; convert dB → linear power; Lee speckle filter; simplified cosine terrain flatten; back to dB. The **same** recipe is applied to the event stack and to the historical stack.
 2. **Features** — dual-pol index `WI = VV_dB + VH_dB`. Historical change `ΔWI = WI_hist − WI_event` (positive = newly darker than the lookback mean). Always-dark water and pavement stay near `ΔWI ≈ 0`.
-3. **2-D GMM / k-means** — standardise (`WI`, `ΔWI`); sample AOI pixels with permanent water excluded; fit a **4-component GMM** (full covariance) and **k-means** on the same samples. Flood is the component with **low WI and positive mean ΔWI** (not `k = 2` water vs land: permanent dark water and new flood both look dark). GMM is the map; k-means is the comparison.
+3. **Unsupervised 2-D GMM / k-means** — this step **replaces Otsu**. Standardise (`WI`, `ΔWI`); sample AOI pixels with permanent water excluded so the sea does not dominate the fit; fit a **4-component GMM** (`sklearn.mixture.GaussianMixture`, full covariance) and **k-means** on the same samples. Flood is the component with the **lowest WI among those with positive mean ΔWI**. Permanent dark water sits at low WI and `ΔWI ≈ 0`; dry land is brighter. GMM is the map; k-means is comparison only. There is no WI histogram threshold and no `WI_CHANGE_MIN_DB` cut.
 4. **Flood candidate** — GMM flood cluster, then drop WorldCover 80, JRC occurrence ≥ threshold, DEM nodata (open sea), and optional WorldCover 50/60. WorldCover / JRC / DEM are **post-masks**, not GMM features.
 5. **Terrain** — drop high ground (`ELEVATION_MAX_M` and optional height above AOI FABDEM p5) and slopes steeper than `SLOPE_MAX_DEG`; layover/shadow *risk proxy* from slope vs incidence angle. Elevation is **FABDEM** (bare earth), not raw Copernicus GLO-30 (DSM with buildings/trees).
 6. **Clean** — minimum mapping unit, then a small morphological opening.
@@ -110,7 +110,7 @@ The figure's bottom-right panel draws flood in yellow, **likely unclosed** roads
 
 **Read these as a geometric/network proxy, not an official closure list.** SAR flood pixels are 10–40 m; a centreline has no width. Bridges can still be misclassified if OSM tags are missing. In-AOI “no detour” does not mean the rest of Hawke’s Bay is unreachable. Official NZTA / council closures are a different dataset.
 
-Defaults: `HIST_LOOKBACK_YEARS = 1` in `notebooks/layer_config.py` (UI `processing/defaults.py` matches). The notebook no longer uses `WI_CHANGE_MIN_DB` or `WATER_INDEX_MAX_DB`; those remain only for the UI Otsu path.
+Defaults: `HIST_LOOKBACK_YEARS = 1` in `notebooks/layer_config.py` (UI `processing/defaults.py` matches). `WI_CHANGE_MIN_DB` and `WATER_INDEX_MAX_DB` are leftover from the old 1-D Otsu path; **`01_` and `04_` do not use them**.
 
 SAR is used because it works through cloud (storms/cyclones). Sentinel-2 is a secondary optical check, not the primary flood classifier.
 
@@ -188,7 +188,7 @@ For these reasons, the silt RF is retained as a discussion experiment only. Usef
 
 ## Architecture
 
-The notebook (`01_sentinel1_layer.ipynb`) is the lab-style reference. The map UI still runs the older Otsu path in `processing/pipeline.py`.
+The notebook (`01_sentinel1_layer.ipynb`) is the lab-style reference. Flood is the GMM cluster on (`WI`, `ΔWI`); k-means is fitted on the same samples for comparison only.
 
 Two Sentinel-1 stacks share one AOI and the same Lee / terrain-flatten steps:
 
@@ -288,7 +288,7 @@ flowchart TD
 
 ## Map UI
 
-A local FastAPI page (`ui/`) plus Leaflet. Dates, AOI, max slope, and max elevation are chosen in the browser. Historical lookback and the remaining Otsu / WI-change cuts stay in `processing/defaults.py`. The notebook GMM path is **not** executed by the UI.
+A local FastAPI page (`ui/`) plus Leaflet. Dates, AOI, max slope, and max elevation are chosen in the browser. Historical lookback, FABDEM terrain caps, and MMU live in `processing/defaults.py`. The flood rule to match is the notebook **GMM**, not Otsu.
 
 ### Design
 
@@ -334,7 +334,7 @@ Defaults match Cyclone Gabrielle at Hawke’s Bay Airport: 2023-02-01 → 2023-0
 
 ### UI parameters
 
-These controls are sent with `POST /api/run`. They replace the notebook’s `START_DATE` / `END_DATE` / `MAP_CENTER` / `AOI_RADIUS_KM` / `SLOPE_MAX_DEG` / `ELEVATION_MAX_M`. Other UI thresholds (`WATER_INDEX_MAX_DB`, `HIST_LOOKBACK_YEARS`, `WI_CHANGE_MIN_DB`, `ELEVATION_ABOVE_P5_M`, MMU, and so on) stay in `processing/defaults.py`. The notebook flood classifier is GMM, not those dB cuts.
+These controls are sent with `POST /api/run`. They replace the notebook’s `START_DATE` / `END_DATE` / `MAP_CENTER` / `AOI_RADIUS_KM` / `SLOPE_MAX_DEG` / `ELEVATION_MAX_M`. Lookback, FABDEM relative cap, and MMU stay in `processing/defaults.py`. Flood class membership comes from the **2-D GMM**, not from `WATER_INDEX_MAX_DB` or `WI_CHANGE_MIN_DB`.
 
 
 | Control           | JSON field                       | Default                               | Role                                                                                                                              |
@@ -349,7 +349,7 @@ These controls are sent with `POST /api/run`. They replace the notebook’s `STA
 | Max elevation (m) | `elevation_max_m`                | 25                                    | Drop flood candidates at or above this FABDEM height. A second relative cap (`ELEVATION_ABOVE_P5_M`) still applies in the backend |
 
 
-**Progress steps (shown under the button):** (1) initialise Earth Engine, (2) search Sentinel-1, (3) Sentinel-2 RGB, (4) DEM / WorldCover / JRC, (5) Lee + terrain flatten, (6) water index + Otsu + historical WI change (UI path; the notebook uses GMM on the same two features), (7) elevation / slope / layover masks, (8) vectorise flood polygons, (9) area statistics, LINZ buildings, and OSM likely-closed roads, (10) render figure. Earth Engine is lazy, so the bar can sit on steps 6, 7 and 9 for a while (step 9 also waits on Overpass). Only **one** run at a time; a second job waits.
+**Progress steps (shown under the button):** (1) initialise Earth Engine, (2) search Sentinel-1, (3) Sentinel-2 RGB, (4) DEM / WorldCover / JRC, (5) Lee + terrain flatten, (6) water index + historical `ΔWI` + **2-D GMM flood cluster**, (7) elevation / slope / layover masks, (8) vectorise flood polygons, (9) area statistics, LINZ buildings, and OSM likely-closed roads, (10) render figure. Earth Engine is lazy, so the bar can sit on steps 6, 7 and 9 for a while (step 9 also waits on Overpass). Only **one** run at a time; a second job waits.
 
 **Optional Gemini analysis:** set any of `REPORT_ANALYSIS`, `REPORT_IMPLICATIONS`, `REPORT_UNCERTAINTIES`, `REPORT_CONCLUSION` to `True` in `notebooks/layer_config.py` to add those HTML sections under the statistics table (needs `GEMINI_KEY` in `.env`). All `False` skips the Gemini call.
 
@@ -391,7 +391,7 @@ Jobs usually take **several minutes**. `--reload` picks up Python changes; refre
 
 **Product**
 
-- A map of flood and inundation extent for a chosen AOI and **event** date range, from Sentinel-1 versus a multi-year historical mean (optional Sentinel-2 RGB for context).
+- A map of flood and inundation extent for a chosen AOI and **event** date range, from an unsupervised 2-D GMM on Sentinel-1 (`WI`, `ΔWI`) versus a multi-year historical mean (optional Sentinel-2 RGB for context).
 - A notebook or GitHub repository containing the code.
 - Run on past flood events to show the method works.
 - A partner can adapt it to their own SAR data.
@@ -420,7 +420,7 @@ Jobs usually take **several minutes**. `--reload` picks up Python changes; refre
 | Dragonfly flood polygons ∩ `final_flood` (IoU / F1)              | Project novelty (`04_validation.ipynb`)       |
 
 
-**Honesty line:** Lecture 6 classifies land vs water with **Random Forest on VV/VH**. This project's S1 notebook uses a **VV+VH water index** and **unsupervised 2-D GMM / k-means** on (`WI`, `ΔWI`), then WorldCover/JRC/DEM as post-masks. That cluster path is a project choice, not the lecture classifier. The UI `processing/pipeline.py` still uses Otsu + a dB change cut.
+**Honesty line:** Lecture 6 classifies land vs water with **Random Forest on VV/VH**. This project replaced a 1-D **Otsu** WI threshold with **unsupervised 2-D GMM / k-means** on (`WI`, `ΔWI`), then WorldCover/JRC/FABDEM as post-masks. That cluster path is a project choice, not the lecture classifier.
 
 ---
 
@@ -445,7 +445,7 @@ GEOG761-GIS/
   outputs/silt_layer/          # experimental RF metrics
   data/nz-building/            # local LINZ NZ Building Outlines (not committed)
   processing/                  # UI backend
-    pipeline.py                # S1 UI flood flow (Otsu path; notebook uses GMM)
+    pipeline.py                # S1 UI flood flow (should match notebook GMM)
     s2_pipeline.py             # S2 U-Net flood flow (same as 02_)
     buildings.py               # LINZ outlines ∩ flood
     roads.py                   # OSM drive ∩ flood (likely-closed, detours)
