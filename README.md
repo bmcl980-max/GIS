@@ -126,6 +126,18 @@ The generated comparison figure is a **2 × 2** grid: Sentinel-1 VV (top left), 
 
 The Sentinel-2 tab (`notebooks/02_sentinel2_layer.ipynb`, `processing/s2_pipeline.py`) produces a **1 × 3** figure from the first L1C scene on or after the peak date: event RGB with scale bar and north arrow (left), pretrained U-Net++ water (middle), and final flood = U-Net water minus permanent water on low / flat ground (right). This example is Cyclone Gabrielle, 14 Feb 2023 (~61% cloud). Parts of the cloud deck are labelled flood, so read optical results alongside the Sentinel-1 map.
 
+**Pretrained model used**
+
+- **Checkpoint:** `sm_unet_s2.pt` with `sm_unet_s2.json`, downloaded from Hugging Face [`isp-uv-es/udl4fl_models`](https://huggingface.co/isp-uv-es/udl4fl_models).
+- **Architecture:** `segmentation_models_pytorch.UnetPlusPlus` with a **MobileNetV2 encoder**, six input channels, and two output classes: `land` and `water`. Although the checkpoint is named `sm_unet_s2` and its JSON says `unet`, the saved decoder keys match **U-Net++**.
+- **Training domain:** the published model was trained on **WorldFloods + S1S2Water**. It is loaded as-is and is **not retrained or fine-tuned on Aotearoa**. This is different from the course Lab 5 exercise, which builds a local six-band U-Net with ImageNet encoder weights.
+- **Input:** one `COPERNICUS/S2_HARMONIZED` **Level-1C TOA** scene, using native DN values in band order `B2, B3, B4, B8, B11, B12` (blue, green, red, NIR, SWIR1, SWIR2). The model-specific mean and standard deviation come from `sm_unet_s2.json`. Surface-reflectance data are not substituted because the checkpoint was trained on L1C.
+- **Inference:** export at 10 m, run overlapping 256 × 256 tiles with reflection padding, apply softmax, and retain class-1 water where `P(water) ≥ 0.6`. Invalid/nodata pixels are excluded.
+- **Flood product:** the network predicts **event water, not flood**. Final flood is U-Net water minus WorldCover/JRC permanent water and DEM-nodata sea, restricted to the configured low/flat FABDEM mask, then cleaned with the minimum mapping unit.
+- **Licence:** the model is CC BY-NC, so this use is non-commercial/coursework only.
+
+There is no pre-event optical change test in this branch. Clouds, cloud shadow, sunglint, turbid water, and transfer from the global training data to Hawke's Bay can therefore cause error. The model output should be treated as a secondary optical check on the Sentinel-1 result, not an independent all-weather flood map.
+
 ![Sentinel-2 U-Net flood-mapping output](assets/s2_output.png)
 
 ### Evaluation against Dragonfly flood extent
