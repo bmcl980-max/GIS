@@ -130,7 +130,7 @@ The Sentinel-2 tab (`notebooks/02_sentinel2_layer.ipynb`, `processing/s2_pipelin
 
 ### Evaluation against Dragonfly flood extent
 
-`notebooks/04_validation.ipynb` scores a Sentinel-1 `final_flood` raster against the Dragonfly Data Science Hawke’s Bay flood polygons for **14 Feb 2023** ([data release](https://www.dragonfly.co.nz/news/2023-02-17-cyclone-gabrielle)). Urban and non-urban GeoPackages are merged, clipped to the AOI, and painted to a raster. **Permanent water is dropped on both maps** so the scores cover new inundation only. The agreement figure below was produced with the **Otsu + `WI_CHANGE_MIN_DB`** rebuild in that notebook, not yet the GMM classifier in `01_sentinel1_layer.ipynb`.
+`notebooks/04_validation.ipynb` rebuilds the same 2-D GMM `final_flood` as `01_sentinel1_layer.ipynb`, then scores it against the Dragonfly Data Science Hawke’s Bay flood polygons for **14 Feb 2023** ([data release](https://www.dragonfly.co.nz/news/2023-02-17-cyclone-gabrielle)). Urban and non-urban GeoPackages are merged, clipped to the AOI, and painted to a raster. **Permanent water is dropped on both maps** so the scores cover new inundation only. Re-run the notebook to refresh `outputs/validation/agreement.png` after GMM changes.
 
 
 | Code       | Meaning                         |
