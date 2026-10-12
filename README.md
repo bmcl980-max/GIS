@@ -190,6 +190,8 @@ The latest balanced AOI hold-out contained 50 not-silt and 50 silt/slip samples.
 
 Overall accuracy was **0.47**, silt recall **0.48**, and Cohen's kappa **−0.06**. Lowering the probability threshold increased recall but did not create useful separation: at 0.35, recall reached **0.90**, while **45 of 50** not-silt samples became false positives. This trade-off indicates substantial overlap between the SAR response of sediment, wet ground, floodwater, and ordinary land; changing the threshold alone cannot fix the model.
 
+![AOI hold-out confusion matrix at P(silt) > 0.5 (left) and silt vs not-silt recall versus probability threshold (right)](outputs/silt_layer/rf_silt_metrics.png)
+
 The method also differs materially from the cited study: PODPC was designed to improve histogram/Otsu thresholding in the Loess Plateau, whereas this notebook uses those transforms as RF predictors in vegetated Hawke's Bay. A cubic transform of VV is monotonic and therefore adds no new ordering information to a tree compared with VV itself. The Dragonfly label dates, SAR acquisition time, 50 m smoothing, mixed `silt`/`slip` target, and transfer between different landscapes further limit interpretation.
 
 For these reasons, the silt RF is retained as a discussion experiment only. Useful next steps would require independent field labels, separate silt and slip classes, texture/land-cover predictors, more events, spatially blocked validation, and comparison of the paper's original threshold workflow against untransformed VV/VH baselines.
