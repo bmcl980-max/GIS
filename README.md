@@ -149,7 +149,38 @@ This example is Cyclone Gabrielle, **±5 km at** `[-39.58, 176.88]`, event windo
 
 ![Agreement between Sentinel-1 flood and Dragonfly 14 Feb 2023 flood extent](outputs/validation/agreement.png)
 
-**Read this as method agreement, not ground-truth accuracy.** The Dragonfly 14 Feb layer is itself a Sentinel-1 product and is likely from the same 14 Feb ~07:07 UTC pass, so the scores are an **upper bound**. Reference products are model outputs, not field surveys. A second Dragonfly layer (19/21 Feb Sentinel-2 silt / slip / flood) is used only to check silt overlap with false alarms; that is not the flood accuracy score. Urban recall is near zero because flooded streets stay bright in SAR (double bounce), so a “darker than history” rule misses them.
+**Read this as method agreement, not ground-truth accuracy.** The Dragonfly 14 Feb layer is itself a Sentinel-1 product and is likely from the same 14 Feb ~07:07 UTC pass, so the scores are an **upper bound**. Reference products are model outputs, not field surveys. The separate 19/21 Feb Dragonfly silt/slip layer is discussed below as an experimental sediment-mapping label; it is not part of the flood accuracy score. Urban recall is near zero because flooded streets stay bright in SAR (double bounce), so a “darker than history” rule misses them.
+
+---
+
+## Discussion
+
+### Experimental post-flood silt mapping
+
+`notebooks/05_silt_layer.ipynb` tests whether Sentinel-1 can identify sediment deposits after Cyclone Gabrielle, including places where standing floodwater had receded. This is an exploratory extension and is **not included in the validated flood product or UI** because its hold-out performance is not yet adequate.
+
+The experiment is motivated by Ma et al. (2024), [*Using SAR imagery to extract flash flood sediment deposition area in the northern Loess Plateau*](https://doi.org/10.1016/j.jhydrol.2024.132045). Their PODPC method reported strong threshold separation from powered polarisation combinations. The notebook adapts the reported best combinations to a supervised Random Forest:
+
+- post-event `VV³`, `(VV + VH)⁶`, and `(VV × VH)³`;
+- same-orbit change `ΔVV` and `ΔVH` (pre minus post);
+- Sentinel-1 incidence angle.
+
+The selected post-event scene is Sentinel-1 IW GRD from **20 February 2023**, descending relative orbit **175**. Its baseline is the same-pass, same-orbit scene from **8 February 2023**. Both VV and VH receive the Lecture 6-style 50 m focal-mean speckle operation.
+
+Dragonfly `silt` and `slip` polygons from 19/21 February form class 1. Class 0 is all other eligible land and can include Dragonfly `flood`. WorldCover/JRC permanent water is excluded from both training and testing, rather than taught as “not silt.” Training samples come from the outer buffer with the map AOI removed; testing uses only the AOI. Samples are drawn at 20 m, and silt is oversampled during training to address low recall. These labels are another remote-sensing model, not field observations, and combining `silt` with `slip` broadens the meaning of the positive class.
+
+The latest balanced AOI hold-out contained 50 not-silt and 50 silt/slip samples. At `P(silt) > 0.50`, the result was:
+
+| Reference class | Predicted not-silt | Predicted silt |
+| --- | ---: | ---: |
+| Not-silt | 23 | 27 |
+| Silt/slip | 26 | 24 |
+
+Overall accuracy was **0.47**, silt recall **0.48**, and Cohen's kappa **−0.06**. Lowering the probability threshold increased recall but did not create useful separation: at 0.35, recall reached **0.90**, while **45 of 50** not-silt samples became false positives. This trade-off indicates substantial overlap between the SAR response of sediment, wet ground, floodwater, and ordinary land; changing the threshold alone cannot fix the model.
+
+The method also differs materially from the cited study: PODPC was designed to improve histogram/Otsu thresholding in the Loess Plateau, whereas this notebook uses those transforms as RF predictors in vegetated Hawke's Bay. A cubic transform of VV is monotonic and therefore adds no new ordering information to a tree compared with VV itself. The Dragonfly label dates, SAR acquisition time, 50 m smoothing, mixed `silt`/`slip` target, and transfer between different landscapes further limit interpretation.
+
+For these reasons, the silt RF is retained as a discussion experiment only. Useful next steps would require independent field labels, separate silt and slip classes, texture/land-cover predictors, more events, spatially blocked validation, and comparison of the paper's original threshold workflow against untransformed VV/VH baselines.
 
 ---
 
@@ -409,7 +440,9 @@ GEOG761-GIS/
     02_sentinel2_layer.ipynb
     03_dem_layer.ipynb
     04_validation.ipynb        # S1 vs Dragonfly flood / silt
+    05_silt_layer.ipynb        # experimental silt/slip RF (discussion only)
   outputs/validation/          # agreement map and score CSVs
+  outputs/silt_layer/          # experimental RF metrics
   data/nz-building/            # local LINZ NZ Building Outlines (not committed)
   processing/                  # UI backend
     pipeline.py                # S1 UI flood flow (Otsu path; notebook uses GMM)
