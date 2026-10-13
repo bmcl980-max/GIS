@@ -6,6 +6,8 @@ The Sentinel-1 notebook (`01_sentinel1_layer.ipynb`) is the method of record. Th
 
 ---
 
+
+
 ## The problem
 
 Selecting a suitable site for logistics supply from sea, immediately following a disaster event requiring HA/DR support.
@@ -39,7 +41,7 @@ Selecting a suitable site for logistics supply from sea, immediately following a
 | JRC Global Surface Water         | `JRC/GSW1_4/GlobalSurfaceWater` `occurrence`                                                                                                      | Permanent / frequent water                                                                                                  |
 | Sentinel-2 RGB (optional figure) | `COPERNICUS/S2_SR_HARMONIZED`                                                                                                                     | Context RGB, not the flood classifier                                                                                       |
 | LINZ NZ Building Outlines        | [LINZ layer 101290](https://data.linz.govt.nz/layer/101290-nz-building-outlines/), local shapefile at `data/nz-building/nz-building-outlines.shp` | Roof outlines (≥ 10 m²) from aerial imagery; counts buildings that touch the flood. Not on GEE; read locally with GeoPandas |
-| OpenStreetMap drive network      | Overpass via `osmnx` (`network_type="drive"`)                                                                                                     | Named roads, lanes, bridge/tunnel tags, and a connected graph for flood-affected / detour checks (notebook 5e and UI)        |
+| OpenStreetMap drive network      | Overpass via `osmnx` (`network_type="drive"`)                                                                                                     | Named roads, lanes, bridge/tunnel tags, and a connected graph for flood-affected / detour checks (notebook 5e and UI)       |
 
 
 **How a pixel becomes flood**
@@ -106,11 +108,11 @@ OSM is used instead of LINZ Topo50 because drive edges form a **connected graph*
 | `roads_detours`                                 | Per-name rows: flooded length, detour status, `detour_route` (named streets in order), extra metres |
 
 
-The figure's bottom-right panel draws flood in yellow, **not flood-affected** roads in teal, and **flood-affected** roads in magenta. The notebook map adds the flood-affected edges as a magenta layer.
+The figure's bottom-right panel draws flood in yellow, **not flood-affected** roads in teal, and **flood-affected** roads in magenta. The notebook map adds the flood-affected edges as a magenta layer. Notebook section 5f (after the 2×2) maps those edges against in-AOI detours.
 
 **Read these as a geometric/network proxy, not an official closure list.** SAR flood pixels are 10–40 m; a centreline has no width. Bridges can still be misclassified if OSM tags are missing. In-AOI “no detour” does not mean the rest of Hawke’s Bay is unreachable. Official NZTA / council closures are a different dataset.
 
-Defaults: `HIST_LOOKBACK_YEARS = 1` in `notebooks/layer_config.py` (UI `processing/defaults.py` matches). `WI_CHANGE_MIN_DB` and `WATER_INDEX_MAX_DB` are leftover from the old 1-D Otsu path; **`01_` and `04_` do not use them**.
+Defaults: `HIST_LOOKBACK_YEARS = 1` in `notebooks/layer_config.py` (UI `processing/defaults.py` matches). `WI_CHANGE_MIN_DB` and `WATER_INDEX_MAX_DB` are leftover from the old 1-D Otsu path; `01_` **and** `04_` **do not use them**.
 
 SAR is used because it works through cloud (storms/cyclones). Sentinel-2 is a secondary optical check, not the primary flood classifier.
 
@@ -120,7 +122,13 @@ SAR is used because it works through cloud (storms/cyclones). Sentinel-2 is a se
 
 The generated comparison figure is a **2 × 2** grid: Sentinel-1 VV (top left), water index with `final_flood` in yellow (top right), LINZ buildings ∩ flood (bottom left), OSM flood-affected vs not flood-affected roads (bottom right).
 
-![Sentinel-1 flood-mapping program output](assets/s1_outout3.png)
+![Sentinel-1 flood-mapping program output](assets/s1_output3.png)
+
+### Example in-AOI detours for flood-affected roads
+
+Notebook section 5f plots the flood-affected OSM edges (magenta) against the remaining in-AOI shortest path (green) and the same detour table printed in 5e. This example is Cyclone Gabrielle, **±5 km at** `[-39.58, 176.88]`: two named roads have an in-AOI detour; eight have no alternative inside the box.
+
+![In-AOI detours for flood-affected roads](outputs/s1_road_detours.png)
 
 ### Example Sentinel-2 U-Net output
 
@@ -128,7 +136,7 @@ The Sentinel-2 tab (`notebooks/02_sentinel2_layer.ipynb`, `processing/s2_pipelin
 
 **Pretrained model used**
 
-- **Checkpoint:** `sm_unet_s2.pt` with `sm_unet_s2.json`, downloaded from Hugging Face [`isp-uv-es/udl4fl_models`](https://huggingface.co/isp-uv-es/udl4fl_models).
+- **Checkpoint:** `sm_unet_s2.pt` with `sm_unet_s2.json`, downloaded from Hugging Face `[isp-uv-es/udl4fl_models](https://huggingface.co/isp-uv-es/udl4fl_models)`.
 - **Architecture:** `segmentation_models_pytorch.UnetPlusPlus` with a **MobileNetV2 encoder**, six input channels, and two output classes: `land` and `water`. Although the checkpoint is named `sm_unet_s2` and its JSON says `unet`, the saved decoder keys match **U-Net++**.
 - **Training domain:** the published model was trained on **WorldFloods + S1S2Water**. It is loaded as-is and is **not retrained or fine-tuned on Aotearoa**. This is different from the course Lab 5 exercise, which builds a local six-band U-Net with ImageNet encoder weights.
 - **Input:** one `COPERNICUS/S2_HARMONIZED` **Level-1C TOA** scene, using native DN values in band order `B2, B3, B4, B8, B11, B12` (blue, green, red, NIR, SWIR1, SWIR2). The model-specific mean and standard deviation come from `sm_unet_s2.json`. Surface-reflectance data are not substituted because the checkpoint was trained on L1C.
@@ -165,13 +173,17 @@ This example is Cyclone Gabrielle, **±5 km at** `[-39.58, 176.88]`, event windo
 
 ---
 
+
+
 ## Discussion
+
+
 
 ### Experimental post-flood silt mapping
 
 `notebooks/05_silt_layer.ipynb` tests whether Sentinel-1 can identify sediment deposits after Cyclone Gabrielle, including places where standing floodwater had receded. This is an exploratory extension and is **not included in the validated flood product or UI** because its hold-out performance is not yet adequate.
 
-The experiment is motivated by Ma et al. (2024), [*Using SAR imagery to extract flash flood sediment deposition area in the northern Loess Plateau*](https://doi.org/10.1016/j.jhydrol.2024.132045). Their PODPC method reported strong threshold separation from powered polarisation combinations. The notebook adapts the reported best combinations to a supervised Random Forest:
+The experiment is motivated by Ma et al. (2024), *[Using SAR imagery to extract flash flood sediment deposition area in the northern Loess Plateau](https://doi.org/10.1016/j.jhydrol.2024.132045)*. Their PODPC method reported strong threshold separation from powered polarisation combinations. The notebook adapts the reported best combinations to a supervised Random Forest:
 
 - post-event `VV³`, `(VV + VH)⁶`, and `(VV × VH)³`;
 - same-orbit change `ΔVV` and `ΔVH` (pre minus post);
@@ -183,10 +195,12 @@ Dragonfly `silt` and `slip` polygons from 19/21 February form class 1. Class 0 i
 
 The latest balanced AOI hold-out contained 50 not-silt and 50 silt/slip samples. At `P(silt) > 0.50`, the result was:
 
+
 | Reference class | Predicted not-silt | Predicted silt |
-| --- | ---: | ---: |
-| Not-silt | 23 | 27 |
-| Silt/slip | 26 | 24 |
+| --------------- | ------------------ | -------------- |
+| Not-silt        | 23                 | 27             |
+| Silt/slip       | 26                 | 24             |
+
 
 Overall accuracy was **0.47**, silt recall **0.48**, and Cohen's kappa **−0.06**. Lowering the probability threshold increased recall but did not create useful separation: at 0.35, recall reached **0.90**, while **45 of 50** not-silt samples became false positives. This trade-off indicates substantial overlap between the SAR response of sediment, wet ground, floodwater, and ordinary land; changing the threshold alone cannot fix the model.
 
@@ -207,10 +221,10 @@ The notebook (`01_sentinel1_layer.ipynb`) is the lab-style reference. Flood is t
 Two Sentinel-1 stacks share one AOI and the same Lee / terrain-flatten steps:
 
 
-| Stack      | Date filter                                       | Role                                                        |
-| ---------- | ------------------------------------------------- | ----------------------------------------------------------- |
-| Event      | `START_DATE` → `END_DATE`                         | `WI_event` (one axis of the 2-D clusterer)                  |
-| Historical | `START_DATE − HIST_LOOKBACK_YEARS` → `START_DATE` | `WI_hist`; `ΔWI = WI_hist − WI_event` (the other axis)      |
+| Stack      | Date filter                                       | Role                                                   |
+| ---------- | ------------------------------------------------- | ------------------------------------------------------ |
+| Event      | `START_DATE` → `END_DATE`                         | `WI_event` (one axis of the 2-D clusterer)             |
+| Historical | `START_DATE − HIST_LOOKBACK_YEARS` → `START_DATE` | `WI_hist`; `ΔWI = WI_hist − WI_event` (the other axis) |
 
 
 Flood is the GMM component that is dark **and** newly darker than history, then WorldCover / JRC / DEM filters. Sentinel-2 is optional optical context, not the flood classifier. The comparison figure is a 2×2 of event Sentinel-1 VV, water index with `final_flood`, LINZ buildings, and OSM flood-affected roads.
@@ -341,7 +355,7 @@ Tabs do not share form fields, Leaflet maps, or run state. Sentinel-1 uses `POST
 | Header     | Team name, optional logo, and tabs (**Sentinel-1 SAR** vs **Sentinel-2 U-Net**)                                                                                                                                                                                                                                    |
 | Left panel | Native date pickers (start, end, optional peak; default peak is the window midpoint). Half-width (km) for click-to-centre mode. **Max slope (°)** and **max elevation (m)** (defaults `SLOPE_MAX_DEG=10`, `ELEVATION_MAX_M=25`). Run button. Live **progress** under the button: bar, `Step n/10: …`, elapsed time |
 | Map        | OpenStreetMap. **Click** places a gold rectangle of ± half-width km. Leaflet.draw **rectangle** tool for a custom box. Selected bounds are shown as text                                                                                                                                                           |
-| Results    | Same 2×2 figure as notebook section 5c (LINZ buildings ∩ flood; OSM flood-affected vs not flood-affected roads), then a **Key Flood Statistics** table: flood area, share of AOI, buildings, flooded road length/area, flood-affected name count and names                                                                     |
+| Results    | Same 2×2 figure as notebook section 5c (LINZ buildings ∩ flood; OSM flood-affected vs not flood-affected roads), then a **Key Flood Statistics** table: flood area, share of AOI, buildings, flooded road length/area, flood-affected name count and names                                                         |
 
 
 Defaults match Cyclone Gabrielle at Hawke’s Bay Airport: 2023-02-01 → 2023-02-25, peak 2023-02-15, 5 km half-width, map centred at about `[-39.471, 176.869]`. Terrain defaults are **10°** max slope and **25 m** max elevation (`GET /api/defaults` loads these from `processing/defaults.py`).
@@ -450,11 +464,12 @@ GEOG761-GIS/
   assets/logo/                 # team logo (optional)
   notebooks/                   # GEE / geemap layer tests
     layer_config.py            # notebook AOI, dates, thresholds (incl. LINZ building path)
-    01_sentinel1_layer.ipynb   # S1 flood reference (GMM; 5d buildings, 5e OSM roads)
+    01_sentinel1_layer.ipynb   # S1 flood reference (GMM; 5d buildings, 5e–5f OSM roads / detours)
     02_sentinel2_layer.ipynb
     03_dem_layer.ipynb
     04_validation.ipynb        # S1 vs Dragonfly flood / silt
     05_silt_layer.ipynb        # experimental silt/slip RF (discussion only)
+  outputs/s1_road_detours.png  # 5f in-AOI detours for flood-affected roads
   outputs/validation/          # agreement map and score CSVs
   outputs/silt_layer/          # experimental RF metrics
   data/nz-building/            # local LINZ NZ Building Outlines (not committed)
