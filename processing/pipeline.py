@@ -8,6 +8,7 @@ from __future__ import annotations
 import io
 import math
 import re
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from datetime import date, timedelta
 from typing import Any, Callable
@@ -59,35 +60,21 @@ from processing.ee_auth import initialize_ee, project_id
 from processing import defaults as cfg
 from processing.buildings import (
     draw_buildings_panel,
-    ee_fc_to_gdf,
+    fc_payload_to_gdf,
     intersect_buildings_with_flood,
     load_buildings_in_bounds,
     resolve_building_path,
 )
-from processing.roads import classify_roads_with_flood, draw_roads_panel
+from processing.roads import classify_roads_with_flood, draw_roads_panel, fetch_osm_drive_edges
 
 
 def _report_section_flags() -> tuple[bool, bool, bool, bool]:
-    """Read REPORT_* from notebooks/layer_config.py (UI extra sections)."""
-    import importlib.util
-    from pathlib import Path
-
-    path = Path(__file__).resolve().parents[1] / "notebooks" / "layer_config.py"
-    spec = importlib.util.spec_from_file_location("_layer_config_report_flags", path)
-    if spec is None or spec.loader is None:
-        return (
-            bool(cfg.REPORT_ANALYSIS),
-            bool(cfg.REPORT_IMPLICATIONS),
-            bool(cfg.REPORT_UNCERTAINTIES),
-            bool(cfg.REPORT_CONCLUSION),
-        )
-    mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mod)
+    """REPORT_* flags from processing/defaults.py (UI extra sections)."""
     return (
-        bool(getattr(mod, "REPORT_ANALYSIS", False)),
-        bool(getattr(mod, "REPORT_IMPLICATIONS", False)),
-        bool(getattr(mod, "REPORT_UNCERTAINTIES", False)),
-        bool(getattr(mod, "REPORT_CONCLUSION", False)),
+        bool(cfg.REPORT_ANALYSIS),
+        bool(cfg.REPORT_IMPLICATIONS),
+        bool(cfg.REPORT_UNCERTAINTIES),
+        bool(cfg.REPORT_CONCLUSION),
     )
 
 
@@ -258,21 +245,18 @@ def fabdem_elevation(aoi: ee.Geometry) -> ee.Image:
     return dem.clip(aoi).rename("elevation")
 
 
-def _area_km2(mask_img: ee.Image, aoi: ee.Geometry) -> float:
-    m2 = (
-        ee.Image.pixelArea()
-        .updateMask(mask_img)
-        .reduceRegion(
-            reducer=ee.Reducer.sum(),
-            geometry=aoi,
-            scale=cfg.AREA_SCALE,
-            bestEffort=True,
-            maxPixels=1e9,
-        )
-        .get("area")
-    )
-    val = ee.Number(m2).divide(1e6).getInfo()
-    return 0.0 if val is None else float(val)
+def _km2(val: Any) -> float:
+    return 0.0 if val is None else float(val) / 1e6
+
+
+def _stacked_pixel_area(masks: dict[str, ee.Image]) -> ee.Image:
+    """One multi-band pixel-area image so area stats share a single reduceRegion."""
+    px = ee.Image.pixelArea()
+    bands = [px.updateMask(mask).rename(name) for name, mask in masks.items()]
+    stack = bands[0]
+    for band in bands[1:]:
+        stack = stack.addBands(band)
+    return stack
 
 
 def _worldcover_rgb(worldcover: ee.Image) -> ee.Image:
@@ -651,13 +635,6 @@ def run_flood_mapping(
         wi_cap = cfg.WATER_INDEX_MAX_DB
         wi_effective = min(wi_otsu, wi_cap)
         event_water = water_index.lt(wi_otsu).And(water_index.lt(wi_cap)).rename("event_water")
-        # wi_pct = water_index.reduceRegion(
-        #     reducer=ee.Reducer.percentile([5, 50, 95]),
-        #     geometry=aoi,
-        #     scale=scale,
-        #     bestEffort=True,
-        #     maxPixels=1e9,
-        # ).getInfo()
 
         hist_end = start
         hist_start = (
@@ -675,13 +652,6 @@ def run_flood_mapping(
         # Positive = event is darker than the historical mean (more water-like).
         wi_change = hist_wi.subtract(water_index).rename("WI_change")
         wi_anomalous = wi_change.gt(cfg.WI_CHANGE_MIN_DB).rename("wi_anomalous")
-        # wi_change_pct = wi_change.reduceRegion(
-        #     reducer=ee.Reducer.percentile([5, 50, 95]),
-        #     geometry=aoi,
-        #     scale=scale,
-        #     bestEffort=True,
-        #     maxPixels=1e9,
-        # ).getInfo()
 
         flood_candidate = (
             event_water.And(wi_anomalous)
@@ -729,62 +699,70 @@ def run_flood_mapping(
             labelProperty="flood",
             maxPixels=1e9,
         )
-        n_poly = int(flood_boundary.size().getInfo())
 
         report(9, "Computing area, building, and OSM road statistics")
-        aoi_km2 = _area_km2(ee.Image.constant(1).clip(aoi), aoi)
-        stats = {
-            "aoi_km2": aoi_km2,
-            "event_water_km2": _area_km2(event_water, aoi),
-            "wi_anomalous_km2": _area_km2(wi_anomalous, aoi),
-            # "permanent_water_km2": _area_km2(permanent_water, aoi),
-            # "worldcover_80_km2": _area_km2(wc_water, aoi),
-            # "event_on_permanent_km2": _area_km2(event_water.And(permanent_water), aoi),
-            # "dark_land_km2": _area_km2(dark_land, aoi),
-            # "event_on_dark_land_km2": _area_km2(event_water.And(dark_land), aoi),
-            # "flood_candidate_km2": _area_km2(flood_candidate, aoi),
-            # "after_elev_mask_km2": _area_km2(flood_candidate.And(elev_ok), aoi),
-            # "after_slope_mask_km2": _area_km2(flood_candidate.And(elev_ok).And(slope_ok), aoi),
-            # "after_all_masks_km2": _area_km2(flood_masked, aoi),
-            # "after_mmu_km2": _area_km2(flood_mmu, aoi),
-            "flood_final_km2": _area_km2(final_flood, aoi),
-            # "excluded_by_elevation_km2": _area_km2(flood_candidate.And(elev_ok.Not()), aoi),
-            # "excluded_by_slope_km2": _area_km2(flood_candidate.And(slope_ok.Not()), aoi),
-            # "excluded_by_layover_shadow_km2": _area_km2(
-            #     flood_candidate.And(layover_shadow_risk), aoi
-            # ),
-            "flooded_urban_km2": _area_km2(final_flood.And(urban_flag), aoi),
-        }
-        stats["flood_pct_of_aoi"] = (
-            100 * stats["flood_final_km2"] / stats["aoi_km2"] if stats["aoi_km2"] else 0.0
+        area_stack = _stacked_pixel_area(
+            {
+                "aoi": ee.Image.constant(1).clip(aoi),
+                "flood_final": final_flood,
+                "flooded_urban": final_flood.And(urban_flag),
+            }
         )
-
-        flood_gdf = ee_fc_to_gdf(flood_boundary)
-        buildings_aoi = None
-        buildings_affected = None
+        area_region = area_stack.reduceRegion(
+            reducer=ee.Reducer.sum(),
+            geometry=aoi,
+            scale=cfg.AREA_SCALE,
+            bestEffort=True,
+            maxPixels=1e9,
+        )
         bldg_path = resolve_building_path(cfg.BUILDING_OUTLINES_PATH)
-        if bldg_path is not None:
-            buildings_aoi = load_buildings_in_bounds(bldg_path, bounds)
-            buildings_affected, bldg_stats = intersect_buildings_with_flood(
-                buildings_aoi, flood_gdf
-            )
-            stats.update(bldg_stats)
 
-        roads_closed = None
-        roads_open = None
-        road_stats: dict[str, Any] | None = None
-        try:
-            _ground, roads_closed, roads_open, road_stats = classify_roads_with_flood(
-                bounds, flood_gdf
+        def _load_buildings():
+            if bldg_path is None:
+                return None
+            return load_buildings_in_bounds(bldg_path, bounds)
+
+        with ThreadPoolExecutor(max_workers=4) as pool:
+            osm_fut = pool.submit(fetch_osm_drive_edges, bounds)
+            bldg_fut = pool.submit(_load_buildings)
+            area_fut = pool.submit(area_region.getInfo)
+            flood_fut = pool.submit(flood_boundary.getInfo)
+
+            areas = area_fut.result() or {}
+            flood_gdf = fc_payload_to_gdf(flood_fut.result())
+            n_poly = int(len(flood_gdf))
+            stats = {
+                "aoi_km2": _km2(areas.get("aoi")),
+                "flood_final_km2": _km2(areas.get("flood_final")),
+                "flooded_urban_km2": _km2(areas.get("flooded_urban")),
+            }
+            stats["flood_pct_of_aoi"] = (
+                100 * stats["flood_final_km2"] / stats["aoi_km2"] if stats["aoi_km2"] else 0.0
             )
-            stats.update(road_stats)
-        except Exception as road_exc:  # noqa: BLE001 — OSM/Overpass must not fail the flood run
-            meta_road_error = str(road_exc)
+
+            buildings_aoi = bldg_fut.result()
+            buildings_affected = None
+            if buildings_aoi is not None:
+                buildings_affected, bldg_stats = intersect_buildings_with_flood(
+                    buildings_aoi, flood_gdf
+                )
+                stats.update(bldg_stats)
+
             roads_closed = None
             roads_open = None
-            road_stats = None
-        else:
-            meta_road_error = None
+            road_stats: dict[str, Any] | None = None
+            try:
+                osm_graph, osm_edges = osm_fut.result()
+                _ground, roads_closed, roads_open, road_stats = classify_roads_with_flood(
+                    bounds, flood_gdf, graph=osm_graph, edges=osm_edges
+                )
+                stats.update(road_stats)
+                meta_road_error = None
+            except Exception as road_exc:  # noqa: BLE001 — OSM/Overpass must not fail the flood run
+                meta_road_error = str(road_exc)
+                roads_closed = None
+                roads_open = None
+                road_stats = None
 
         report(10, "Rendering comparison figure")
         w, s, e, n = bounds
@@ -825,7 +803,6 @@ def run_flood_mapping(
             "s1_hist_end": hist_end,
             "hist_lookback_years": cfg.HIST_LOOKBACK_YEARS,
             "wi_change_min_db": cfg.WI_CHANGE_MIN_DB,
-            # "wi_change_percentiles": wi_change_pct,
             "s2_scenes_used": n_s2,
             "s2_scenes_cloudy_lt_10": n_s2_clear,
             "closest_s1_id": closest_id,
@@ -834,7 +811,6 @@ def run_flood_mapping(
             "wi_otsu_db": round(wi_otsu, 3),
             "wi_cap_db": wi_cap,
             "wi_effective_db": round(wi_effective, 3),
-            # "wi_percentiles": wi_pct,
             "dem_percentiles": dem_pct,
             "flood_polygons": n_poly,
             "slope_max_deg": req.slope_max_deg,

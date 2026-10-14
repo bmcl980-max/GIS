@@ -31,10 +31,11 @@ def resolve_building_path(configured: str | None = None) -> Path | None:
     return None
 
 
-def ee_fc_to_gdf(fc) -> gpd.GeoDataFrame:
-    """Convert a small Earth Engine FeatureCollection via getInfo()."""
-    payload = fc.getInfo() or {}
-    feats = payload.get("features") or []
+def fc_payload_to_gdf(payload: dict | list | None) -> gpd.GeoDataFrame:
+    """Build a GeoDataFrame from an Earth Engine FeatureCollection getInfo() dict."""
+    if isinstance(payload, list):
+        payload = {"features": payload}
+    feats = (payload or {}).get("features") or []
     if not feats:
         return gpd.GeoDataFrame(geometry=[], crs=WGS84)
     rows = []
@@ -47,6 +48,11 @@ def ee_fc_to_gdf(fc) -> gpd.GeoDataFrame:
         geoms.append(shape(geom))
         rows.append(props)
     return gpd.GeoDataFrame(rows, geometry=geoms, crs=WGS84)
+
+
+def ee_fc_to_gdf(fc) -> gpd.GeoDataFrame:
+    """Convert a small Earth Engine FeatureCollection via getInfo()."""
+    return fc_payload_to_gdf(fc.getInfo())
 
 
 def load_buildings_in_bounds(path: Path, bounds: list[float]) -> gpd.GeoDataFrame:
@@ -95,14 +101,10 @@ def intersect_buildings_with_flood(
     n_hit = int(len(hit))
     footprint_km2 = 0.0
     if n_hit:
-        inter = gpd.overlay(
-            hit.to_crs(NZTM),
-            f4326.to_crs(NZTM)[["geometry"]],
-            how="intersection",
-            keep_geom_type=False,
-        )
-        if not inter.empty:
-            footprint_km2 = float(inter.geometry.area.sum() / 1e6)
+        flood_nztm = f4326.to_crs(NZTM).geometry
+        flood_union = flood_nztm.union_all() if hasattr(flood_nztm, "union_all") else flood_nztm.unary_union
+        if flood_union is not None and not flood_union.is_empty:
+            footprint_km2 = float(hit.to_crs(NZTM).geometry.intersection(flood_union).area.sum() / 1e6)
     stats = {
         "buildings_in_aoi": n_aoi,
         "buildings_affected": n_hit,

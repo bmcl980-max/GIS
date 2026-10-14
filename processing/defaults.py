@@ -39,9 +39,9 @@ ROAD_LANE_WIDTH_M = 3.5
 ROAD_MIN_HALF_WIDTH_M = 3.5
 ROAD_MAX_DETOUR_NAMES = 40
 
-# Keep in sync with notebooks/layer_config.py. UI always shows the figure
-# and Key Flood Statistics; these flags add Gemini HTML sections below.
-REPORT_ANALYSIS = False
+# UI always shows the figure and Key Flood Statistics; these flags add Gemini
+# HTML sections below. The notebook uses its own flags in layer_config.py.
+REPORT_ANALYSIS = True
 REPORT_IMPLICATIONS = False
 REPORT_UNCERTAINTIES = False
 REPORT_CONCLUSION = False

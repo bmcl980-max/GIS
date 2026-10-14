@@ -157,14 +157,14 @@ def classify_roads_with_flood(
         graph, edges = fetch_osm_drive_edges(bounds)
 
     roads_nztm = edges.to_crs(NZTM).copy()
-    roads_nztm["name"] = roads_nztm.apply(
-        lambda r: _tag_str(r["name"], "(unnamed)") if "name" in r.index else "(unnamed)",
-        axis=1,
-    )
-    roads_nztm["highway"] = roads_nztm.apply(
-        lambda r: _tag_str(r["highway"]) if "highway" in r.index else "",
-        axis=1,
-    )
+    if "name" in roads_nztm.columns:
+        roads_nztm["name"] = roads_nztm["name"].map(lambda v: _tag_str(v, "(unnamed)"))
+    else:
+        roads_nztm["name"] = "(unnamed)"
+    if "highway" in roads_nztm.columns:
+        roads_nztm["highway"] = roads_nztm["highway"].map(_tag_str)
+    else:
+        roads_nztm["highway"] = ""
     roads_nztm["is_bridge_or_tunnel"] = roads_nztm.apply(_is_bridge_or_tunnel, axis=1)
     roads_nztm["half_width_m"] = roads_nztm.apply(_half_width_m, axis=1)
     roads_nztm["length_m"] = roads_nztm.geometry.length
@@ -182,13 +182,12 @@ def classify_roads_with_flood(
         flooded_len = pd.Series(0.0, index=ground.index)
         flooded_area = pd.Series(0.0, index=ground.index)
     else:
-        flood_union = unary_union(flood.to_crs(NZTM).geometry)
-        flooded_len = ground.geometry.intersection(flood_union).length
-        buffered = gpd.GeoSeries(
-            [geom.buffer(w) for geom, w in zip(ground.geometry, ground["half_width_m"])],
-            index=ground.index,
-            crs=ground.crs,
+        flood_geom = flood.to_crs(NZTM).geometry
+        flood_union = (
+            flood_geom.union_all() if hasattr(flood_geom, "union_all") else unary_union(flood_geom)
         )
+        flooded_len = ground.geometry.intersection(flood_union).length
+        buffered = ground.geometry.buffer(ground["half_width_m"])
         flooded_area = buffered.intersection(flood_union).area
 
     ground["flooded_length_m"] = flooded_len.to_numpy()

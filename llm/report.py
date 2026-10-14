@@ -12,6 +12,7 @@ import io
 import json
 import os
 import re
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
@@ -109,9 +110,12 @@ def figure_to_png_bytes(figure: Any) -> bytes:
     if isinstance(figure, (bytes, bytearray)):
         return bytes(figure)
     if isinstance(figure, str):
-        path = Path(figure)
-        if path.is_file():
-            return path.read_bytes()
+        try:
+            is_path = Path(figure).is_file()
+        except OSError:
+            is_path = False
+        if is_path:
+            return Path(figure).read_bytes()
         return base64.b64decode(figure)
     if isinstance(figure, Path):
         return figure.read_bytes()
@@ -126,15 +130,36 @@ def figure_to_png_bytes(figure: Any) -> bytes:
     raise TypeError(f"Unsupported figure type: {type(figure)!r}")
 
 
-def _client():
-    from google import genai
+_ADC_ENV = (
+    "GOOGLE_APPLICATION_CREDENTIALS",
+    "GOOGLE_GENAI_USE_VERTEXAI",
+    "GOOGLE_CLOUD_PROJECT",
+    "GCLOUD_PROJECT",
+    "GOOGLE_CLOUD_LOCATION",
+)
 
-    key = os.environ.get("GEMINI_KEY") or os.environ.get("GOOGLE_API_KEY")
+
+@contextmanager
+def _gemini_api_key_only():
+    """Use GEMINI_KEY and hide Earth Engine ADC for the Gemini HTTP call."""
+    key = (os.environ.get("GEMINI_KEY") or os.environ.get("GOOGLE_API_KEY") or "").strip()
     if not key:
         raise RuntimeError(
             "Missing API key. Set GEMINI_KEY (or GOOGLE_API_KEY) in the repo-root .env."
         )
-    return genai.Client(api_key=key)
+    saved = {name: os.environ.pop(name) for name in _ADC_ENV if name in os.environ}
+    os.environ["GEMINI_API_KEY"] = key
+    try:
+        yield key
+    finally:
+        for name, value in saved.items():
+            os.environ[name] = value
+
+
+def _client(api_key: str):
+    from google import genai
+
+    return genai.Client(api_key=api_key, vertexai=False)
 
 
 def _strip_fences(text: str) -> str:
@@ -204,20 +229,25 @@ def generate_flood_report(
         f"{extra_line} Output a complete HTML document only.\n\n"
         f"```json\n{json.dumps(payload, indent=2, default=str)}\n```"
     )
-    client = _client()
     config = types.GenerateContentConfig(
         system_instruction=_SYSTEM,
         max_output_tokens=max_tokens,
         automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=True),
     )
-    response = client.models.generate_content(
-        model=model or DEFAULT_MODEL,
-        contents=[
-            types.Part.from_bytes(data=png, mime_type="image/png"),
-            user_text,
-        ],
-        config=config,
-    )
+    with _gemini_api_key_only() as api_key:
+        # Keep `client` referenced for the whole call: google-genai's Client
+        # closes its underlying HTTP client on GC, and an inline chained call
+        # (``_client(api_key).models.generate_content(...)``) can let that
+        # happen before the request is sent, raising "client has been closed".
+        client = _client(api_key)
+        response = client.models.generate_content(
+            model=model or DEFAULT_MODEL,
+            contents=[
+                types.Part.from_bytes(data=png, mime_type="image/png"),
+                user_text,
+            ],
+            config=config,
+        )
     html = _strip_fences(response.text or "")
     return _embed_figure(html, png)
 
