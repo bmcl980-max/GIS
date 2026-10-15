@@ -55,6 +55,8 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
 from PIL import Image
+from sklearn.cluster import KMeans
+from sklearn.mixture import GaussianMixture
 
 from processing.ee_auth import initialize_ee, project_id
 from processing import defaults as cfg
@@ -173,64 +175,156 @@ def lee_filter(image: ee.Image, radius: int = 1, enl: float = cfg.SENTINEL1_ENL)
     )
 
 
-def _otsu_from_histogram(counts: list[float], means: list[float]) -> float | None:
-    total = sum(counts)
-    if total == 0:
-        return None
-    grand_mean = sum(c * m for c, m in zip(counts, means)) / total
-    best_bss, best_mean = -1.0, means[0]
-    a_count = a_sum = 0.0
-    for i in range(len(counts) - 1):
-        a_count += counts[i]
-        a_sum += counts[i] * means[i]
-        b_count = total - a_count
-        if a_count == 0 or b_count == 0:
-            continue
-        a_mean = a_sum / a_count
-        b_mean = (total * grand_mean - a_sum) / b_count
-        bss = a_count * (a_mean - grand_mean) ** 2 + b_count * (b_mean - grand_mean) ** 2
-        if bss > best_bss:
-            best_bss, best_mean = bss, means[i]
-    return best_mean
+def _fc_props_to_array(fc: ee.FeatureCollection, props: list[str], chunk: int) -> np.ndarray:
+    """getInfo() on a FeatureCollection aborts above ~5000 elements; pull in chunks."""
+    n = int(fc.size().getInfo() or 0)
+    rows: list[list[float]] = []
+    for start in range(0, n, chunk):
+        feats = ee.FeatureCollection(fc.toList(chunk, start)).getInfo()["features"]
+        for feat in feats:
+            rows.append([feat["properties"].get(p) for p in props])
+    return np.array(rows, dtype=float)
 
 
-def compute_otsu(
-    band_image: ee.Image,
-    band_name: str,
-    region: ee.Geometry,
-    scale: int = cfg.WORKING_SCALE,
-    max_buckets: int = 256,
-    min_bucket_width: float = 0.001,
-) -> float:
-    hist = (
-        band_image.reduceRegion(
-            reducer=ee.Reducer.histogram(max_buckets, min_bucket_width),
-            geometry=region,
+def _gmm_component_table(
+    means_z: np.ndarray,
+    wi_mean: float,
+    wi_std: float,
+    dw_mean: float,
+    dw_std: float,
+    weights: np.ndarray | None = None,
+) -> list[dict[str, float]]:
+    wi = means_z[:, 0] * wi_std + wi_mean
+    dw = means_z[:, 1] * dw_std + dw_mean
+    score = dw / dw_std - means_z[:, 0]
+    table = []
+    for i in range(len(wi)):
+        row = {
+            "wi_mean_db": float(wi[i]),
+            "dwi_mean_db": float(dw[i]),
+            "score": float(score[i]),
+        }
+        if weights is not None:
+            row["weight"] = float(weights[i])
+        table.append(row)
+    return table
+
+
+def _pick_flood_component(table: list[dict[str, float]]) -> int:
+    """Flood = darkest (low WI) among components that darkened vs history."""
+    changed = [i for i, row in enumerate(table) if row["dwi_mean_db"] > 0]
+    pool = changed if changed else range(len(table))
+    return max(pool, key=lambda i: table[i]["score"])
+
+
+def fit_gmm_flood_cluster(
+    water_index: ee.Image,
+    wi_change: ee.Image,
+    permanent_water: ee.Image,
+    aoi: ee.Geometry,
+    scale: int,
+) -> tuple[ee.Image, dict[str, Any]]:
+    """Unsupervised flood cluster: 2-D GMM on standardised (WI, ΔWI).
+
+    Matches notebooks/01_sentinel1_layer.ipynb section 3. Replaces a fixed
+    Otsu threshold + WI_CHANGE_MIN_DB cut: the flood component is named by
+    physics (lowest WI among components with positive mean ΔWI), not a
+    hand-set dB cutoff. WorldCover/JRC/DEM stay out of the feature vector —
+    they are post-processing masks applied by the caller, same as before.
+
+    A k-means fit on the same samples is reported in the returned meta for
+    the comparison table the notebook prints; the backend does not build or
+    render its per-pixel raster since it is not used downstream.
+    """
+    feat_stats = (
+        water_index.addBands(wi_change)
+        .updateMask(permanent_water.Not())
+        .reduceRegion(
+            reducer=ee.Reducer.mean().combine(ee.Reducer.stdDev(), sharedInputs=True),
+            geometry=aoi,
             scale=scale,
             bestEffort=True,
             maxPixels=1e9,
+            tileScale=4,
         )
-        .get(band_name)
         .getInfo()
     )
-    threshold = None
-    if hist and hist.get("bucketMeans") and hist.get("histogram"):
-        threshold = _otsu_from_histogram(hist["histogram"], hist["bucketMeans"])
-    if threshold is None:
-        threshold = (
-            band_image.reduceRegion(
-                reducer=ee.Reducer.mean(),
-                geometry=region,
-                scale=scale,
-                bestEffort=True,
-                maxPixels=1e9,
-            )
-            .get(band_name)
-            .getInfo()
+    wi_mean, wi_std = feat_stats.get("WI_mean"), feat_stats.get("WI_stdDev")
+    dw_mean, dw_std = feat_stats.get("WI_change_mean"), feat_stats.get("WI_change_stdDev")
+    if not wi_std or not dw_std:
+        raise ValueError("Could not standardise WI / ΔWI for the GMM — check AOI coverage.")
+
+    wi_z = water_index.subtract(wi_mean).divide(wi_std).rename("WI_z")
+    dw_z = wi_change.subtract(dw_mean).divide(dw_std).rename("dWI_z")
+    feat_z = wi_z.addBands(dw_z).updateMask(permanent_water.Not()).clip(aoi)
+
+    training = feat_z.sample(
+        region=aoi,
+        scale=scale,
+        numPixels=cfg.GMM_SAMPLE_PIXELS,
+        seed=cfg.GMM_SEED,
+        geometries=False,
+        tileScale=4,
+    )
+    x = _fc_props_to_array(training, ["WI_z", "dWI_z"], cfg.GMM_GETINFO_CHUNK)
+    x = x[np.isfinite(x).all(axis=1)]
+    n_clusters = cfg.GMM_N_CLUSTERS
+    if len(x) < n_clusters * 20:
+        raise ValueError(
+            f"Too few samples for the GMM ({len(x)}; need >= {n_clusters * 20}). "
+            "Widen the AOI or date range."
         )
-    if threshold is None:
-        raise ValueError(f"compute_otsu: no valid pixels for band '{band_name}'.")
-    return float(threshold)
+
+    gmm = GaussianMixture(
+        n_components=n_clusters,
+        covariance_type="full",
+        random_state=cfg.GMM_SEED,
+        n_init=5,
+    ).fit(x)
+    kmeans = KMeans(n_clusters=n_clusters, random_state=cfg.GMM_SEED, n_init=10).fit(x)
+
+    gmm_table = _gmm_component_table(gmm.means_, wi_mean, wi_std, dw_mean, dw_std, gmm.weights_)
+    kmeans_table = _gmm_component_table(kmeans.cluster_centers_, wi_mean, wi_std, dw_mean, dw_std)
+    flood_id = _pick_flood_component(gmm_table)
+    kmeans_flood_id = _pick_flood_component(kmeans_table)
+
+    def _loglik_image(k: int) -> ee.Image:
+        mean = gmm.means_[k]
+        cov = gmm.covariances_[k]
+        weight = float(gmm.weights_[k])
+        prec = np.linalg.inv(cov)
+        det = float(np.linalg.det(cov))
+        log_norm = np.log(max(weight, 1e-12)) - 0.5 * np.log((2.0 * np.pi) ** 2 * max(det, 1e-12))
+        d0 = wi_z.subtract(float(mean[0]))
+        d1 = dw_z.subtract(float(mean[1]))
+        maha = (
+            d0.pow(2)
+            .multiply(float(prec[0, 0]))
+            .add(d0.multiply(d1).multiply(2.0 * float(prec[0, 1])))
+            .add(d1.pow(2).multiply(float(prec[1, 1])))
+        )
+        return ee.Image.constant(log_norm).subtract(maha.multiply(0.5)).rename(f"ll_{k}")
+
+    scores = [_loglik_image(k) for k in range(n_clusters)]
+    best = scores[0]
+    label = ee.Image.constant(0)
+    for k, img in enumerate(scores[1:], start=1):
+        label = label.where(img.gt(best), k)
+        best = best.max(img)
+    cluster = label.rename("cluster").clip(aoi)
+    gmm_flood = cluster.eq(flood_id).rename("gmm_flood")
+
+    meta = {
+        "clusterer": "gmm",
+        "n_clusters": n_clusters,
+        "cluster_sample_pixels": cfg.GMM_SAMPLE_PIXELS,
+        "cluster_samples_used": int(len(x)),
+        "gmm_flood_id": flood_id,
+        "gmm_components": gmm_table,
+        "kmeans_flood_id": kmeans_flood_id,
+        "kmeans_components": kmeans_table,
+    }
+    return gmm_flood, meta
 
 
 def fabdem_elevation(aoi: ee.Geometry) -> ee.Image:
@@ -440,6 +534,7 @@ def _figure_png_b64(
     roads_open=None,
     roads_closed=None,
     road_stats: dict[str, Any] | None = None,
+    road_error: str | None = None,
 ) -> str:
     import base64
 
@@ -481,7 +576,17 @@ def _figure_png_b64(
         roads_closed is not None and not roads_closed.empty
     )
     has_flood = flood_gdf is not None and not flood_gdf.empty
-    if road_bounds is not None and (has_roads or has_flood):
+    if road_error:
+        draw_roads_panel(
+            axes[1][1],
+            road_bounds,
+            flood_gdf,
+            roads_open,
+            roads_closed,
+            stats=road_stats,
+            error=road_error,
+        )
+    elif road_bounds is not None and (has_roads or has_flood):
         draw_roads_panel(
             axes[1][1],
             road_bounds,
@@ -504,9 +609,12 @@ def _figure_png_b64(
     extra = ""
     if n_buildings_affected is not None:
         extra += f" LINZ buildings intersecting flood: {n_buildings_affected:,}."
-    n_closed_names = None if not road_stats else road_stats.get("roads_likely_closed_names")
-    if n_closed_names is not None:
-        extra += f" OSM roads likely closed: {n_closed_names}."
+    if road_error:
+        extra += f" OSM roads not available: {road_error}"
+    else:
+        n_affected_names = None if not road_stats else road_stats.get("roads_flood_affected_names")
+        if n_affected_names is not None:
+            extra += f" OSM flood affected roads: {n_affected_names}."
     fig.text(
         0.5,
         0.01,
@@ -630,11 +738,6 @@ def run_flood_mapping(
         co_angle = co_col.select("angle").mean().clip(aoi)
 
         water_index = co_db.select("VV").add(co_db.select("VH")).rename("WI")
-        report(6, "Computing water index, Otsu, and historical WI change")
-        wi_otsu = compute_otsu(water_index, "WI", aoi, scale)
-        wi_cap = cfg.WATER_INDEX_MAX_DB
-        wi_effective = min(wi_otsu, wi_cap)
-        event_water = water_index.lt(wi_otsu).And(water_index.lt(wi_cap)).rename("event_water")
 
         hist_end = start
         hist_start = (
@@ -651,11 +754,14 @@ def run_flood_mapping(
         hist_wi = hist_db.select("VV").add(hist_db.select("VH")).rename("WI_hist")
         # Positive = event is darker than the historical mean (more water-like).
         wi_change = hist_wi.subtract(water_index).rename("WI_change")
-        wi_anomalous = wi_change.gt(cfg.WI_CHANGE_MIN_DB).rename("wi_anomalous")
 
+        report(6, "Fitting 2-D GMM flood cluster (WI, ΔWI)")
+        gmm_flood, gmm_meta = fit_gmm_flood_cluster(water_index, wi_change, permanent_water, aoi, scale)
+
+        # GMM flood cluster minus lakes/sea and optional WorldCover 50/60.
+        # WorldCover / JRC / DEM-nodata are masks only; they were not GMM features.
         flood_candidate = (
-            event_water.And(wi_anomalous)
-            .And(permanent_water.Not())
+            gmm_flood.And(permanent_water.Not())
             .And(dark_land.Not())
             .rename("flood_candidate")
         )
@@ -751,15 +857,15 @@ def run_flood_mapping(
             roads_closed = None
             roads_open = None
             road_stats: dict[str, Any] | None = None
+            meta_road_error = None
             try:
                 osm_graph, osm_edges = osm_fut.result()
                 _ground, roads_closed, roads_open, road_stats = classify_roads_with_flood(
                     bounds, flood_gdf, graph=osm_graph, edges=osm_edges
                 )
                 stats.update(road_stats)
-                meta_road_error = None
             except Exception as road_exc:  # noqa: BLE001 — OSM/Overpass must not fail the flood run
-                meta_road_error = str(road_exc)
+                meta_road_error = f"{type(road_exc).__name__}: {road_exc}"
                 roads_closed = None
                 roads_open = None
                 road_stats = None
@@ -789,6 +895,7 @@ def run_flood_mapping(
             roads_open=roads_open,
             roads_closed=roads_closed,
             road_stats=road_stats,
+            road_error=meta_road_error,
         )
         meta = {
             "gee_project": project_id(),
@@ -802,15 +909,12 @@ def run_flood_mapping(
             "s1_hist_start": hist_start,
             "s1_hist_end": hist_end,
             "hist_lookback_years": cfg.HIST_LOOKBACK_YEARS,
-            "wi_change_min_db": cfg.WI_CHANGE_MIN_DB,
             "s2_scenes_used": n_s2,
             "s2_scenes_cloudy_lt_10": n_s2_clear,
             "closest_s1_id": closest_id,
             "closest_s1_datetime": s1_index_datetime(str(closest_id)),
             "closest_s1_peak_diff_days": peak_diff,
-            "wi_otsu_db": round(wi_otsu, 3),
-            "wi_cap_db": wi_cap,
-            "wi_effective_db": round(wi_effective, 3),
+            **gmm_meta,
             "dem_percentiles": dem_pct,
             "flood_polygons": n_poly,
             "slope_max_deg": req.slope_max_deg,

@@ -100,10 +100,10 @@ OSM is used instead of LINZ Topo50 because drive edges form a **connected graph*
 | `roads_in_aoi_km`                               | OSM drive centreline length in the AOI                                                              |
 | `roads_flooded_km`                              | Centreline length intersecting `flood_boundary`                                                     |
 | `roads_flooded_area_km2`                        | Carriageway buffer ∩ flood, NZTM2000                                                                |
-| `roads_likely_closed_edges`                     | Flood-affected edges meeting the 50 m / 30% rule                                                    |
-| `roads_likely_closed_names`                     | Count of unique OSM names among flood-affected edges                                                |
-| `roads_likely_closed_name_list`                 | Those names, longest flooded first                                                                  |
-| `roads_likely_unclosed_name_list`               | Remaining (not flood-affected) ground-road names, longest first                                     |
+| `roads_flood_affected_edges`                    | Flood-affected edges meeting the 50 m / 30% rule                                                    |
+| `roads_flood_affected_names`                    | Count of unique OSM names among flood-affected edges                                                |
+| `roads_flood_affected_name_list`                | Those names, longest flooded first                                                                  |
+| `roads_not_flood_affected_name_list`            | Remaining (not flood-affected) ground-road names, longest first                                     |
 | `roads_with_aoi_detour` / `roads_no_aoi_detour` | Names with / without an in-AOI alternative                                                          |
 | `roads_detours`                                 | Per-name rows: flooded length, detour status, `detour_route` (named streets in order), extra metres |
 

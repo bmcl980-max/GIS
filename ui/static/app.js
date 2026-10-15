@@ -172,7 +172,7 @@ const KEY_STATS = [
   ["Flooded urban area", "flooded_urban_km2", "km²"],
   ["Flooded road length", "roads_flooded_km", "km"],
   ["Flooded carriageway area", "roads_flooded_area_km2", "km²"],
-  ["Flood affected roads", "roads_likely_closed_names", ""],
+  ["Flood affected roads", "roads_flood_affected_names", ""],
   ["Roads with in-AOI detour", "roads_with_aoi_detour", ""],
   ["Roads with no in-AOI detour", "roads_no_aoi_detour", ""],
 ];
@@ -221,18 +221,37 @@ function extraText(metres) {
   return `${m.toLocaleString(undefined, { maximumFractionDigits: 0 })} m`;
 }
 
-function renderDetours(stats) {
+function detourMessageRow(text) {
+  const tr = document.createElement("tr");
+  const td = document.createElement("td");
+  td.colSpan = 5;
+  td.textContent = text;
+  tr.append(td);
+  return tr;
+}
+
+function renderDetours(stats, meta) {
   const table = document.getElementById("detourStats");
   const heading = document.getElementById("detourHeading");
   const hint = document.getElementById("detourHint");
   const tbody = table.querySelector("tbody");
   tbody.replaceChildren();
-  const rows = stats && Array.isArray(stats.roads_detours) ? stats.roads_detours : [];
-  const show = rows.length > 0;
+  const roadError = meta && meta.osm_road_error;
+  const hasRoadStats = stats && "roads_detours" in stats;
+  const show = Boolean(roadError || hasRoadStats);
   table.hidden = !show;
   heading.hidden = !show;
   hint.hidden = !show;
   if (!show) return;
+  if (roadError) {
+    tbody.append(detourMessageRow(`OSM road analysis failed: ${roadError}`));
+    return;
+  }
+  const rows = Array.isArray(stats.roads_detours) ? stats.roads_detours : [];
+  if (!rows.length) {
+    tbody.append(detourMessageRow("No flood affected roads in this AOI."));
+    return;
+  }
   for (const row of rows) {
     const tr = document.createElement("tr");
     const th = document.createElement("th");
@@ -283,7 +302,7 @@ document.getElementById("runBtn").addEventListener("click", async () => {
     fig.src = `data:image/png;base64,${result.figure_png_base64}`;
     fig.hidden = false;
     renderKeyStats(result.stats);
-    renderDetours(result.stats);
+    renderDetours(result.stats, result.meta);
     if (result.report) {
       analysisFrame.srcdoc = result.report;
       analysisWrap.hidden = false;

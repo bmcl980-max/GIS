@@ -34,17 +34,21 @@ mapping implies for a partner choosing a logistics or beach-landing site.
 How the map was made (use this to interpret, not to recap as a methods essay):
 - Event Sentinel-1 GRD IW VV+VH (~10 m); WI = VV_dB + VH_dB;
   ΔWI = historical mean WI − event WI (lookback years ending at event start).
-- If meta.clusterer is "gmm": flood cluster is a 2-D GMM on (WI, ΔWI)
-  (dark and newly darker); k-means on the same features is comparison only.
-- Otherwise (UI pipeline): event water = WI < Otsu(WI) AND a dB cap, then
-  ΔWI > WI_CHANGE_MIN_DB.
+- Flood cluster is an unsupervised 2-D GMM on (WI, ΔWI): the component named
+  by physics (lowest WI among components with positive mean ΔWI), not a
+  hand-set dB cutoff (dark and newly darker). meta.gmm_flood_id /
+  meta.gmm_components give the chosen component and the full table;
+  meta.kmeans_flood_id / meta.kmeans_components are the same samples fit with
+  k-means, reported only as a comparison, not used to build the flood raster.
 - Permanent water removed afterwards (WorldCover 80, JRC occurrence, DEM nodata
   sea). WorldCover/DEM are post-masks, not GMM features.
 - Low/flat ground from FABDEM (bare earth), not a DSM with buildings/trees.
 - Optional third panel: LINZ building outlines intersecting final_flood.
 - Road network from OSM; edges tagged bridge/tunnel are skipped from the
-  ground-road analysis (osm_bridge_tunnel_skipped). A road is "likely closed"
-  when its geometry intersects final_flood; "AOI detour" means an alternate
+  ground-road analysis (osm_bridge_tunnel_skipped). A road is "flood affected"
+  when its flooded length is >= 50 m or >= 30% of the edge; this is
+  exposure, not a confirmed closure. Never call these roads "closed" or
+  "likely closed"; say "flood affected". "AOI detour" means an alternate
   ground route exists within the AOI, as opposed to no in-AOI alternative.
 
 Analysis requirements:
@@ -61,21 +65,25 @@ Analysis requirements:
   are roof outlines from imagery, not households or occupancy.
 - If road/network keys exist (roads_in_aoi_km, roads_flooded_km,
   roads_flooded_area_km2, osm_edges_in_aoi, osm_ground_edges,
-  osm_bridge_tunnel_skipped, roads_likely_closed_edges,
-  roads_likely_closed_names, roads_with_aoi_detour, roads_no_aoi_detour,
-  roads_likely_closed_name_list, roads_detours): interpret network
+  osm_bridge_tunnel_skipped, roads_flood_affected_edges,
+  roads_flood_affected_names, roads_with_aoi_detour, roads_no_aoi_detour,
+  roads_flood_affected_name_list, roads_detours): interpret network
   exposure, not just area. Report what share of the road network is flooded
-  (km and % of roads_in_aoi_km), how many distinct named roads are likely
-  closed versus how many edges, and what the split between
+  (km and % of roads_in_aoi_km), how many distinct named roads are flood
+  affected versus how many edges, and what the split between
   roads_with_aoi_detour and roads_no_aoi_detour implies for access.
   Include an HTML table of roads_detours (do not invent rows). Columns:
-  closed road name, flooded length (m), detour status, detour_route
+  flood affected road name, flooded length (m), detour status, detour_route
   (named streets in order, joined with arrows), extra_length_m (extra
   metres vs the flooded edge). Use detour_route as the actual in-AOI
   alternative path; empty detour_route with status "no alternative in AOI"
   means the AOI graph has no bypass. "not computed (cap)" means the
-  search was skipped. Note that bridge/tunnel edges are excluded, so true
-  closures may be undercounted where the real cut is a bridge.
+  search was skipped. Note that bridge/tunnel edges are excluded, so
+  flood-affected roads may be undercounted where the real cut is a bridge.
+  If meta.osm_road_error is set, OSM download failed: quote that string as
+  the reason the road panel is empty. Do not invent a generic phrase such
+  as "external service error". Do not invent road km, names, or detour
+  rows when osm_road_error is set.
 - Discuss HA-DR implications: which parts of the AOI look inundated vs
   usable for access; which routes into/out of the flooded area remain open;
   where road and building exposure overlap versus where they diverge
@@ -83,8 +91,9 @@ Analysis requirements:
   not support.
 - Limitations as they affect THIS analysis: speckle, lookback composite vs
   pair, WorldCover 2021, layover/shadow proxy, FABDEM residual error,
-  building-outline lag, OSM completeness/currency, and closure inferred
-  from geometry intersection rather than confirmed road-condition reports.
+  building-outline lag, OSM completeness/currency, and flood-affected roads
+  inferred from geometry intersection rather than confirmed road-condition
+  reports.
   Do not list them as a boilerplate dump.
 
 Rules:

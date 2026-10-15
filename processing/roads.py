@@ -1,4 +1,4 @@
-"""OSM drive network ∩ flood: likely-closed names, area, in-AOI detours.
+"""OSM drive network ∩ flood: flood-affected names, area, in-AOI detours.
 
 Matches notebook section 5e. This is a geometric/network proxy, not an
 official NZTA or council closure list.
@@ -6,6 +6,7 @@ official NZTA or council closure list.
 
 from __future__ import annotations
 
+import textwrap
 from typing import Any
 
 import geopandas as gpd
@@ -65,25 +66,41 @@ def _half_width_m(row: pd.Series) -> float:
     return max(n_lanes * float(cfg.ROAD_LANE_WIDTH_M) / 2.0, min_half)
 
 
+_OVERPASS_URLS = (
+    "https://overpass-api.de/api",
+    "https://overpass.kumi.systems/api",
+)
+
+
 def fetch_osm_drive_edges(bounds: list[float]) -> tuple[Any, gpd.GeoDataFrame]:
     """Download OSM drive graph for [west, south, east, north]; return graph + edges."""
     import osmnx as ox
 
     west, south, east, north = bounds
-    ox.settings.timeout = 180
+    bbox = (west, south, east, north)
     ox.settings.use_cache = True
-    try:
-        graph = ox.graph_from_bbox(
-            (west, south, east, north), network_type="drive", simplify=True
-        )
-    except TypeError:
-        graph = ox.graph_from_bbox(
-            north, south, east, west, network_type="drive", simplify=True
-        )
-    _nodes, edges = ox.graph_to_gdfs(
-        graph, nodes=True, edges=True, fill_edge_geometry=True
-    )
-    return graph, edges.reset_index()
+    ox.settings.requests_timeout = 180
+    # Skip the Overpass slot-wait; retry the next mirror on 429/timeout instead.
+    ox.settings.overpass_rate_limit = False
+    last_exc: Exception | None = None
+    for url in _OVERPASS_URLS:
+        ox.settings.overpass_url = url
+        try:
+            try:
+                graph = ox.graph_from_bbox(bbox, network_type="drive", simplify=True)
+            except TypeError:
+                graph = ox.graph_from_bbox(
+                    north, south, east, west, network_type="drive", simplify=True
+                )
+            _nodes, edges = ox.graph_to_gdfs(
+                graph, nodes=True, edges=True, fill_edge_geometry=True
+            )
+            return graph, edges.reset_index()
+        except Exception as exc:  # noqa: BLE001 — try the next Overpass mirror
+            last_exc = exc
+    raise RuntimeError(
+        f"OSM Overpass failed for bbox {bbox}: {type(last_exc).__name__}: {last_exc}"
+    ) from last_exc
 
 
 def empty_road_stats() -> dict[str, Any]:
@@ -94,10 +111,10 @@ def empty_road_stats() -> dict[str, Any]:
         "roads_in_aoi_km": 0.0,
         "roads_flooded_km": 0.0,
         "roads_flooded_area_km2": 0.0,
-        "roads_likely_closed_edges": 0,
-        "roads_likely_closed_names": 0,
-        "roads_likely_closed_name_list": [],
-        "roads_likely_unclosed_name_list": [],
+        "roads_flood_affected_edges": 0,
+        "roads_flood_affected_names": 0,
+        "roads_flood_affected_name_list": [],
+        "roads_not_flood_affected_name_list": [],
         "roads_with_aoi_detour": 0,
         "roads_no_aoi_detour": 0,
         "roads_detours": [],
@@ -105,7 +122,7 @@ def empty_road_stats() -> dict[str, Any]:
 
 
 def _ordered_via_names(graph_open, path_nodes: list, closed_name: str) -> list[str]:
-    """Consecutive OSM names along a node path, excluding the closed road."""
+    """Consecutive OSM names along a node path, excluding the flood-affected road."""
     via_names: list[str] = []
     for a, b in zip(path_nodes[:-1], path_nodes[1:]):
         data = graph_open.get_edge_data(a, b) or {}
@@ -132,7 +149,7 @@ def _detour_record(
     return {
         "name": name,
         "highway": ", ".join(sorted({h for h in grp["highway"] if h})) or "",
-        "closed_edges": int(len(grp)),
+        "flood_affected_edges": int(len(grp)),
         "flooded_length_m": round(float(grp["flooded_length_m"].sum()), 1),
         "flooded_area_m2": round(float(grp["flooded_area_m2"].sum()), 1),
         "flooded_area_km2": round(float(grp["flooded_area_m2"].sum() / 1e6), 5),
@@ -150,7 +167,7 @@ def classify_roads_with_flood(
     graph: Any | None = None,
     edges: gpd.GeoDataFrame | None = None,
 ) -> tuple[gpd.GeoDataFrame, gpd.GeoDataFrame, gpd.GeoDataFrame, dict[str, Any]]:
-    """Return (ground edges, likely-closed, likely-open, stats)."""
+    """Return (ground edges, flood-affected, not flood-affected, stats)."""
     import networkx as nx
 
     if edges is None or graph is None:
@@ -195,12 +212,12 @@ def classify_roads_with_flood(
     ground["flooded_frac"] = ground["flooded_length_m"] / ground["length_m"].replace(0, pd.NA)
     min_len = float(cfg.ROAD_CLOSED_MIN_LENGTH_M)
     min_frac = float(cfg.ROAD_CLOSED_MIN_FRAC)
-    ground["likely_closed"] = (ground["flooded_length_m"] >= min_len) | (
+    ground["flood_affected"] = (ground["flooded_length_m"] >= min_len) | (
         ground["flooded_frac"].fillna(0) >= min_frac
     )
 
-    roads_closed = ground.loc[ground["likely_closed"]].copy()
-    roads_open = ground.loc[~ground["likely_closed"]].copy()
+    roads_closed = ground.loc[ground["flood_affected"]].copy()
+    roads_open = ground.loc[~ground["flood_affected"]].copy()
 
     closed_keys = set(
         zip(roads_closed["u"], roads_closed["v"], roads_closed["key"])
@@ -260,10 +277,10 @@ def classify_roads_with_flood(
         "roads_in_aoi_km": float(roads_nztm["length_m"].sum() / 1000.0),
         "roads_flooded_km": float(ground["flooded_length_m"].sum() / 1000.0),
         "roads_flooded_area_km2": float(ground["flooded_area_m2"].sum() / 1e6),
-        "roads_likely_closed_edges": int(len(roads_closed)),
-        "roads_likely_closed_names": int(len(closed_name_list)),
-        "roads_likely_closed_name_list": closed_name_list,
-        "roads_likely_unclosed_name_list": unclosed_name_list,
+        "roads_flood_affected_edges": int(len(roads_closed)),
+        "roads_flood_affected_names": int(len(closed_name_list)),
+        "roads_flood_affected_name_list": closed_name_list,
+        "roads_not_flood_affected_name_list": unclosed_name_list,
         "roads_with_aoi_detour": n_detour_ok,
         "roads_no_aoi_detour": n_detour_none,
         "roads_detours": detours,
@@ -278,8 +295,23 @@ def draw_roads_panel(
     roads_open: gpd.GeoDataFrame | None,
     roads_closed: gpd.GeoDataFrame | None,
     stats: dict[str, Any] | None = None,
+    error: str | None = None,
 ) -> None:
-    """Map-style panel: flood fill + OSM roads (open vs likely closed)."""
+    """Map-style panel: flood fill + OSM roads (flood-affected vs not)."""
+    if error:
+        ax.set_axis_off()
+        ax.set_title("OSM roads ∩ flood")
+        wrapped = "\n".join(textwrap.wrap(str(error).strip(), width=56)) or str(error)
+        ax.text(
+            0.5,
+            0.52,
+            "OSM roads not available\n\n" + wrapped,
+            ha="center",
+            va="center",
+            transform=ax.transAxes,
+            fontsize=8,
+        )
+        return
     if bounds is None:
         parts = [g for g in (flood, roads_open, roads_closed) if g is not None and not g.empty]
         if not parts:
@@ -316,13 +348,14 @@ def draw_roads_panel(
     flooded_km = 0.0 if not stats else float(stats.get("roads_flooded_km") or 0.0)
     ax.set_title(
         f"OSM roads ∩ flood\n"
-        f"{n_closed} likely closed, {n_open} likely open, {flooded_km:.2f} km flooded centreline"
+        f"{n_closed} flood affected, {n_open} not flood affected, "
+        f"{flooded_km:.2f} km flooded centreline"
     )
     ax.legend(
         handles=[
             Patch(facecolor=FLOOD_COLOR, edgecolor="0.2", linewidth=0.4, label="Final flood"),
-            Line2D([0], [0], color=CLOSED_COLOR, linewidth=2.2, label="Likely closed road"),
-            Line2D([0], [0], color=OPEN_COLOR, linewidth=1.4, label="Likely unclosed road"),
+            Line2D([0], [0], color=CLOSED_COLOR, linewidth=2.2, label="Flood affected road"),
+            Line2D([0], [0], color=OPEN_COLOR, linewidth=1.4, label="Not flood affected road"),
         ],
         loc="lower right",
         fontsize=7,
