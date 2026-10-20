@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import io
 import math
+import os
 import re
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
@@ -939,18 +940,24 @@ def run_flood_mapping(
         }
         html_report = None
         analysis, implications, uncertainties, conclusion = _report_section_flags()
-        if analysis or implications or uncertainties or conclusion:
+        has_key = bool((os.environ.get("GEMINI_KEY") or os.environ.get("GOOGLE_API_KEY") or "").strip())
+        if (analysis or implications or uncertainties or conclusion) and not has_key:
+            meta["llm_report_skipped"] = "No GEMINI_KEY in .env; AI summary skipped."
+        elif analysis or implications or uncertainties or conclusion:
             from llm.report import generate_flood_report
 
-            html_report = generate_flood_report(
-                stats,
-                figure_b64,
-                meta,
-                include_analysis=analysis,
-                include_implications=implications,
-                include_uncertainties=uncertainties,
-                include_conclusion=conclusion,
-            )
+            try:
+                html_report = generate_flood_report(
+                    stats,
+                    figure_b64,
+                    meta,
+                    include_analysis=analysis,
+                    include_implications=implications,
+                    include_uncertainties=uncertainties,
+                    include_conclusion=conclusion,
+                )
+            except Exception as llm_exc:  # noqa: BLE001 — the AI summary must not fail the flood run
+                meta["llm_report_skipped"] = f"{type(llm_exc).__name__}: {llm_exc}"
         return FloodRunResult(
             ok=True, stats=stats, figure_png_base64=figure_b64, meta=meta, report=html_report
         )
