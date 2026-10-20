@@ -41,6 +41,7 @@ Selecting a suitable site for logistics supply from sea, immediately following a
 | JRC Global Surface Water         | `JRC/GSW1_4/GlobalSurfaceWater` `occurrence`                                                                                                      | Permanent / frequent water                                                                                                  |
 | Sentinel-2 RGB (optional figure) | `COPERNICUS/S2_SR_HARMONIZED`                                                                                                                     | Context RGB, not the flood classifier                                                                                       |
 | LINZ NZ Building Outlines        | [LINZ layer 101290](https://data.linz.govt.nz/layer/101290-nz-building-outlines/), local shapefile at `data/nz-building/nz-building-outlines.shp` | Roof outlines (≥ 10 m²) from aerial imagery; counts buildings that touch the flood. Not on GEE; read locally with GeoPandas |
+| OpenStreetMap buildings          | Overpass via `osmnx` (`building=*` polygons)                                                                                                      | Global fallback when the LINZ file is absent (`BUILDING_SOURCE = "auto"`); completeness varies by place. © OpenStreetMap contributors, ODbL |
 | OpenStreetMap drive network      | Overpass via `osmnx` (`network_type="drive"`)                                                                                                     | Named roads, lanes, bridge/tunnel tags, and a connected graph for flood-affected / detour checks (notebook 5e and UI)       |
 
 
@@ -53,15 +54,17 @@ Selecting a suitable site for logistics supply from sea, immediately following a
 5. **Terrain** — drop high ground (`ELEVATION_MAX_M` and optional height above AOI FABDEM p5) and slopes steeper than `SLOPE_MAX_DEG`; layover/shadow *risk proxy* from slope vs incidence angle. Elevation is **FABDEM** (bare earth), not raw Copernicus GLO-30 (DSM with buildings/trees).
 6. **Clean** — minimum mapping unit, then a small morphological opening.
 7. **Vectorise** — `final_flood` → `flood_boundary` polygons (`reduceToVectors`, 40 m, eight-connected).
-8. **Building exposure** — LINZ outlines ∩ `flood_boundary` (see below).
+8. **Building exposure** — LINZ outlines (NZ) or OSM buildings (anywhere) ∩ `flood_boundary` (see below).
 9. **Road exposure** — OSM drive edges ∩ `flood_boundary`; flood-affected names, inundated carriageway area, in-AOI detours (notebook 5e and `processing/roads.py`).
 10. **Output** — flood raster, boundary polygons, area / building / road stats, 2×2 figure.
 
 
 
-### Counting affected buildings (LINZ ∩ flood)
+### Counting affected buildings (LINZ or OSM ∩ flood)
 
 Code: `processing/buildings.py`, used by notebook section 5d and the UI pipeline.
+
+`BUILDING_SOURCE` (`notebooks/layer_config.py`, `processing/defaults.py`) picks the footprints: `"auto"` (default) uses LINZ if the file below exists, otherwise **OpenStreetMap** `building=*` polygons fetched for the AOI through Overpass, so the product needs no local data outside NZ. `"linz"`, `"osm"` or `"none"` force one choice. The figure and `stats["buildings_source"]` record which was used. OSM completeness varies (HOT often maps buildings after disasters), so OSM counts are a minimum. Steps 1–2 below are LINZ-only; steps 3–4 apply to both.
 
 1. **Download.** Export *NZ Building Outlines* from the LINZ Data Service as a shapefile (WGS 84 or NZTM2000 both work) and unzip it into `data/nz-building/`. The path is `BUILDING_OUTLINES_PATH` in `notebooks/layer_config.py` and `processing/defaults.py`. Shapefile sidecars are gitignored.
 2. **Clip to the AOI.** `gpd.read_file(path, bbox=AOI_BOUNDS)` reads only outlines inside the AOI rectangle (the national file is large), reprojected to WGS 84. This is `buildings_in_aoi`.

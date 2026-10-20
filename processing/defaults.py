@@ -40,6 +40,9 @@ GMM_GETINFO_CHUNK = 4000
 VECTOR_SCALE = 40
 AREA_SCALE = 20
 BUILDING_OUTLINES_PATH = "data/nz-building/nz-building-outlines.shp"
+# "auto" = LINZ if the file above exists, else OpenStreetMap buildings (global).
+# "linz" | "osm" | "none" force one source or switch building exposure off.
+BUILDING_SOURCE = "auto"
 THUMB_DIMENSIONS = 768
 
 # OSM flood-affected roads (notebook 5e / processing/roads.py).

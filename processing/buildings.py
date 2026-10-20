@@ -1,4 +1,11 @@
-"""LINZ NZ Building Outlines ∩ flood polygons."""
+"""Building footprints ∩ flood polygons.
+
+Sources (``BUILDING_SOURCE`` in processing/defaults.py / notebooks/layer_config.py):
+
+- ``"auto"`` (default): LINZ NZ Building Outlines if the local file exists,
+  otherwise OpenStreetMap ``building=*`` polygons for the AOI (global, no download).
+- ``"linz"``: LINZ only. ``"osm"``: OSM only. ``"none"``: skip building exposure.
+"""
 
 from __future__ import annotations
 
@@ -29,6 +36,76 @@ def resolve_building_path(configured: str | None = None) -> Path | None:
         if path.exists():
             return path
     return None
+
+
+BUILDING_SOURCES = ("auto", "linz", "osm", "none")
+
+
+def fetch_osm_buildings(bounds: list[float]) -> gpd.GeoDataFrame:
+    """OSM ``building=*`` polygons inside [west, south, east, north] (WGS84).
+
+    Uses the same Overpass mirrors and osmnx settings as the road network.
+    An AOI with no mapped buildings returns an empty GeoDataFrame.
+    """
+    import osmnx as ox
+
+    from processing.roads import _OVERPASS_URLS
+
+    west, south, east, north = bounds
+    ox.settings.use_cache = True
+    ox.settings.requests_timeout = 180
+    ox.settings.overpass_rate_limit = False
+    tags = {"building": True}
+    last_exc: Exception | None = None
+    for url in _OVERPASS_URLS:
+        ox.settings.overpass_url = url
+        try:
+            try:
+                gdf = ox.features_from_bbox((west, south, east, north), tags=tags)
+            except TypeError:  # osmnx 1.x signature
+                gdf = ox.features_from_bbox(north, south, east, west, tags=tags)
+            break
+        except Exception as exc:  # noqa: BLE001 — empty AOI or mirror failure
+            if type(exc).__name__ == "InsufficientResponseError":
+                return gpd.GeoDataFrame(geometry=[], crs=WGS84)
+            last_exc = exc
+    else:
+        raise RuntimeError(f"OSM Overpass failed for buildings: {type(last_exc).__name__}: {last_exc}")
+
+    gdf = gdf[gdf.geometry.geom_type.isin(["Polygon", "MultiPolygon"])]
+    gdf = gdf.reset_index()
+    if "id" in gdf.columns:
+        gdf = gdf.rename(columns={"id": "osm_id"})
+    keep = [c for c in ("osm_id", "building", "name", "building:levels", "amenity") if c in gdf.columns]
+    gdf = gpd.GeoDataFrame(gdf[keep + ["geometry"]], geometry="geometry", crs=gdf.crs or WGS84).to_crs(WGS84)
+    return gdf[gdf.intersects(box(west, south, east, north))].reset_index(drop=True)
+
+
+def load_buildings(
+    bounds: list[float],
+    configured_path: str | None = None,
+    source: str = "auto",
+) -> tuple[gpd.GeoDataFrame | None, str, str | None]:
+    """Load footprints for the AOI from the configured source.
+
+    Returns ``(buildings or None, source_label, note)``. ``source_label`` is
+    "LINZ", "OSM" or "none"; ``note`` explains why nothing was loaded.
+    """
+    source = (source or "auto").lower()
+    if source not in BUILDING_SOURCES:
+        raise ValueError(f"BUILDING_SOURCE must be one of {BUILDING_SOURCES}, got {source!r}")
+    if source == "none":
+        return None, "none", "Building exposure switched off (BUILDING_SOURCE = 'none')."
+    if source in ("auto", "linz"):
+        path = resolve_building_path(configured_path)
+        if path is not None:
+            return load_buildings_in_bounds(path, bounds).reset_index(drop=True), "LINZ", None
+        if source == "linz":
+            return None, "LINZ", "LINZ building outlines not found (download to data/nz-building/, see README)."
+    try:
+        return fetch_osm_buildings(bounds), "OSM", None
+    except Exception as exc:  # noqa: BLE001 — Overpass must not fail the flood run
+        return None, "OSM", f"OSM buildings unavailable: {type(exc).__name__}: {exc}"
 
 
 def fc_payload_to_gdf(payload: dict | list | None) -> gpd.GeoDataFrame:
@@ -74,7 +151,7 @@ def intersect_buildings_with_flood(
     buildings: gpd.GeoDataFrame,
     flood: gpd.GeoDataFrame,
 ) -> tuple[gpd.GeoDataFrame, dict[str, Any]]:
-    """Buildings that intersect flood polygons; area in NZTM2000."""
+    """Buildings that intersect flood polygons; footprint area in the local UTM zone."""
     empty_stats = {
         "buildings_in_aoi": 0,
         "buildings_affected": 0,
@@ -101,10 +178,11 @@ def intersect_buildings_with_flood(
     n_hit = int(len(hit))
     footprint_km2 = 0.0
     if n_hit:
-        flood_nztm = f4326.to_crs(NZTM).geometry
-        flood_union = flood_nztm.union_all() if hasattr(flood_nztm, "union_all") else flood_nztm.unary_union
+        metric = b4326.estimate_utm_crs() or NZTM
+        flood_m = f4326.to_crs(metric).geometry
+        flood_union = flood_m.union_all() if hasattr(flood_m, "union_all") else flood_m.unary_union
         if flood_union is not None and not flood_union.is_empty:
-            footprint_km2 = float(hit.to_crs(NZTM).geometry.intersection(flood_union).area.sum() / 1e6)
+            footprint_km2 = float(hit.to_crs(metric).geometry.intersection(flood_union).area.sum() / 1e6)
     stats = {
         "buildings_in_aoi": n_aoi,
         "buildings_affected": n_hit,
@@ -121,8 +199,9 @@ def draw_buildings_panel(
     flood: gpd.GeoDataFrame | None,
     buildings_aoi: gpd.GeoDataFrame | None,
     buildings_affected: gpd.GeoDataFrame | None,
+    source_label: str = "LINZ",
 ) -> None:
-    """Map-style panel: flood fill + LINZ outlines (affected in red)."""
+    """Map-style panel: flood fill + building outlines (affected in red)."""
     from matplotlib.patches import Patch
 
     if bounds is None:
@@ -133,7 +212,7 @@ def draw_buildings_panel(
         ]
         if not parts:
             ax.set_axis_off()
-            ax.text(0.5, 0.5, "LINZ buildings not available", ha="center", va="center")
+            ax.text(0.5, 0.5, f"{source_label} buildings not available", ha="center", va="center")
             return
         west, south, east, north = parts[0].to_crs(WGS84).total_bounds
         for g in parts[1:]:
@@ -168,7 +247,9 @@ def draw_buildings_panel(
     ax.set_aspect("equal", adjustable="box")
     ax.set_axis_off()
     n = 0 if buildings_affected is None or buildings_affected.empty else len(buildings_affected)
-    ax.set_title(f"LINZ building outlines ∩ flood\n{n:,} buildings affected")
+    ax.set_title(f"{source_label} building outlines ∩ flood\n{n:,} buildings affected")
+    if source_label == "OSM":
+        ax.text(0.01, 0.01, "© OpenStreetMap contributors", transform=ax.transAxes, fontsize=6, color="0.3")
     ax.legend(
         handles=[
             Patch(facecolor="#ffff00", edgecolor="0.2", linewidth=0.4, label="Final flood"),

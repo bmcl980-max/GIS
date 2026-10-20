@@ -65,8 +65,7 @@ from processing.buildings import (
     draw_buildings_panel,
     fc_payload_to_gdf,
     intersect_buildings_with_flood,
-    load_buildings_in_bounds,
-    resolve_building_path,
+    load_buildings,
 )
 from processing.roads import classify_roads_with_flood, draw_roads_panel, fetch_osm_drive_edges
 from processing.s1_tracks import choose_track, filter_track
@@ -531,6 +530,8 @@ def _figure_png_b64(
     bounds: list[float] | None = None,
     flood_gdf=None,
     buildings_aoi=None,
+    buildings_source: str = "LINZ",
+    buildings_note: str | None = None,
     buildings_affected=None,
     n_buildings_affected: int | None = None,
     roads_open=None,
@@ -566,7 +567,8 @@ def _figure_png_b64(
         axes[1][0].set_axis_off()
         axes[1][0].text(
             0.5, 0.5,
-            "LINZ building outlines not loaded\n(download to data/nz-building/, see README)",
+            buildings_note or "Building outlines not loaded",
+            wrap=True,
             ha="center", va="center",
         )
     elif bldg_bounds is not None and (has_buildings or has_flood):
@@ -576,10 +578,11 @@ def _figure_png_b64(
             flood_gdf,
             buildings_aoi,
             buildings_affected,
+            source_label=buildings_source,
         )
     else:
         axes[1][0].set_axis_off()
-        axes[1][0].text(0.5, 0.5, "LINZ buildings not available", ha="center", va="center")
+        axes[1][0].text(0.5, 0.5, f"{buildings_source} buildings not available", ha="center", va="center")
     road_bounds = bounds or _wgs84_bounds(flood_gdf, roads_open, roads_closed)
     has_roads = (roads_open is not None and not roads_open.empty) or (
         roads_closed is not None and not roads_closed.empty
@@ -617,7 +620,7 @@ def _figure_png_b64(
     urban_pct = 100 * flooded_urban_km2 / flood_km2 if flood_km2 else 0.0
     extra = ""
     if n_buildings_affected is not None:
-        extra += f" LINZ buildings intersecting flood: {n_buildings_affected:,}."
+        extra += f" {buildings_source} buildings intersecting flood: {n_buildings_affected:,}."
     if road_error:
         extra += f" OSM roads not available: {road_error}"
     else:
@@ -630,7 +633,7 @@ def _figure_png_b64(
         f"Figure: Final flood extent (yellow) = {flood_km2 * 1e6:,.0f} m² "
         f"({flood_km2:,.2f} km², {pct:.1f}% of the {aoi_km2:,.1f} km² AOI). "
         f"Urban flooded: {flooded_urban_km2:,.2f} km² ({urban_pct:.1f}% of the flood)."
-        f"{extra}",
+        f"{extra} Roads{' and buildings' if buildings_source == 'OSM' else ''} © OpenStreetMap contributors (ODbL).",
         ha="center",
         va="bottom",
         fontsize=11,
@@ -832,12 +835,8 @@ def run_flood_mapping(
             bestEffort=True,
             maxPixels=1e9,
         )
-        bldg_path = resolve_building_path(cfg.BUILDING_OUTLINES_PATH)
-
         def _load_buildings():
-            if bldg_path is None:
-                return None
-            return load_buildings_in_bounds(bldg_path, bounds)
+            return load_buildings(bounds, cfg.BUILDING_OUTLINES_PATH, cfg.BUILDING_SOURCE)
 
         with ThreadPoolExecutor(max_workers=4) as pool:
             osm_fut = pool.submit(fetch_osm_drive_edges, bounds)
@@ -857,7 +856,8 @@ def run_flood_mapping(
                 100 * stats["flood_final_km2"] / stats["aoi_km2"] if stats["aoi_km2"] else 0.0
             )
 
-            buildings_aoi = bldg_fut.result()
+            buildings_aoi, buildings_source, buildings_note = bldg_fut.result()
+            stats["buildings_source"] = buildings_source
             buildings_affected = None
             if buildings_aoi is not None:
                 buildings_affected, bldg_stats = intersect_buildings_with_flood(
@@ -901,6 +901,8 @@ def run_flood_mapping(
             bounds=bounds,
             flood_gdf=flood_gdf,
             buildings_aoi=buildings_aoi,
+            buildings_source=buildings_source,
+            buildings_note=buildings_note,
             buildings_affected=buildings_affected,
             n_buildings_affected=stats.get("buildings_affected"),
             roads_open=roads_open,

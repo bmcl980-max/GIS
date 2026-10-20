@@ -80,6 +80,9 @@ EXCLUDE_WORLDCOVER_CLASSES = ()
 
 # LINZ NZ Building Outlines (local download; shapefile sidecars are gitignored).
 BUILDING_OUTLINES_PATH = "data/nz-building/nz-building-outlines.shp"
+# "auto" = LINZ if the file above exists, else OpenStreetMap buildings (global).
+# "linz" | "osm" | "none" force one source or switch building exposure off.
+BUILDING_SOURCE = "auto"
 
 # UI always shows the figure and Key Flood Statistics.
 # Extra Gemini HTML sections (notebook report + UI below the stats table):
