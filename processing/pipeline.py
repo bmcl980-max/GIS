@@ -373,23 +373,23 @@ def _nice_scale_km(width_km: float) -> float:
 
 
 def _add_scale_bar(ax, width_km: float) -> None:
-    """Draw a scale bar in the lower-left using image pixel coordinates."""
+    """Scale bar in the lower-left, in the axes' lon/lat data coordinates."""
     import matplotlib.patheffects as pe
     from matplotlib.patches import Rectangle
 
-    img = ax.get_images()[0]
-    height_px, width_px = img.get_array().shape[:2]
+    x_min, x_max = ax.get_xlim()
+    y_min, y_max = ax.get_ylim()
+    deg_per_km = (x_max - x_min) / width_km
     scale_km = _nice_scale_km(width_km)
-    bar_px = scale_km / width_km * width_px
-    # imshow puts row 0 at the top, so "lower" means a large y value.
-    bar_h = max(height_px * 0.012, 4)
-    x0, y0 = width_px * 0.06, height_px * 0.92 - bar_h
+    bar_w = scale_km * deg_per_km
+    bar_h = (y_max - y_min) * 0.012
+    x0 = x_min + (x_max - x_min) * 0.06
+    y0 = y_min + (y_max - y_min) * 0.06
     ax.add_patch(
         Rectangle(
             (x0, y0),
-            bar_px,
+            bar_w,
             bar_h,
-            transform=ax.transData,
             facecolor="white",
             edgecolor="black",
             linewidth=1.4,
@@ -397,8 +397,8 @@ def _add_scale_bar(ax, width_km: float) -> None:
         )
     )
     ax.text(
-        x0 + bar_px / 2,
-        y0 - height_px * 0.01,
+        x0 + bar_w / 2,
+        y0 + bar_h + (y_max - y_min) * 0.012,
         f"{scale_km:g} km",
         ha="center",
         va="bottom",
@@ -474,7 +474,9 @@ def _add_landcover_legend(ax) -> None:
 
 def _ee_thumb_array(image: ee.Image, vis: dict | None, region: ee.Geometry, dimensions: int) -> np.ndarray:
     vis_img = image if vis is None else image.visualize(**vis)
-    url = vis_img.getThumbURL({"region": region, "dimensions": dimensions, "format": "png"})
+    url = vis_img.getThumbURL(
+        {"region": region, "dimensions": dimensions, "format": "png", "crs": "EPSG:4326"}
+    )
     with urlopen(url) as resp:
         return np.array(Image.open(io.BytesIO(resp.read())))
 
@@ -548,10 +550,27 @@ def _figure_png_b64(
     left = _ee_thumb_array(left_img, None, aoi, cfg.THUMB_DIMENSIONS)
     right = _ee_thumb_array(right_img, None, aoi, cfg.THUMB_DIMENSIONS)
 
-    fig, axes = plt.subplots(2, 2, figsize=(13.5, 13.5))
-    axes[0][0].imshow(left)
+    w, s, e, n = bounds if bounds is not None else (0.0, 0.0, 1.0, 1.0)
+    lat0 = (s + n) / 2.0
+    # Same lon/lat frame and true ground aspect on all four panels, so they line up.
+    geo_aspect = 1.0 / max(math.cos(math.radians(lat0)), 1e-6)
+    ground_ratio = ((e - w) * math.cos(math.radians(lat0))) / max(n - s, 1e-9)  # width / height on the ground
+    ground_ratio = min(max(ground_ratio, 0.5), 2.5)
+    panel_w = 6.4
+    fig_h = 2 * (panel_w / ground_ratio + 1.0) + 1.6  # two map rows + their titles + suptitle/caption
+    fig, axes = plt.subplots(2, 2, figsize=(13.5, fig_h), layout="constrained")
+    fig.get_layout_engine().set(rect=(0, 0.07, 1, 0.93), h_pad=0.12, hspace=0.06)
+
+    def _frame(ax) -> None:
+        ax.set_xlim(w, e)
+        ax.set_ylim(s, n)
+        ax.set_aspect(geo_aspect, adjustable="box")
+
+    axes[0][0].imshow(left, extent=(w, e, s, n), interpolation="nearest")
+    axes[0][1].imshow(right, extent=(w, e, s, n), interpolation="nearest")
+    for ax in (axes[0][0], axes[0][1]):
+        _frame(ax)
     axes[0][0].set_title(f"Sentinel-1 VV (dB)\nS1 closest to peak: {s1_when}")
-    axes[0][1].imshow(right)
     axes[0][1].set_title(f"Water index (VV+VH) + final flood\nS1 closest to peak: {s1_when}")
     axes[0][0].set_axis_off()
     axes[0][1].set_axis_off()
@@ -610,6 +629,9 @@ def _figure_png_b64(
     else:
         axes[1][1].set_axis_off()
         axes[1][1].text(0.5, 0.5, "OSM roads not available", ha="center", va="center")
+    for ax in (axes[1][0], axes[1][1]):
+        if ax.axison or ax.collections or ax.lines:
+            _frame(ax)
     center_str = f"[{center[0]:.4f}, {center[1]:.4f}]"
     fig.suptitle(
         f"{center_str}  |  ±{width_km / 2:.1f} km  |  {start} → {end}\n"
@@ -639,7 +661,6 @@ def _figure_png_b64(
         fontsize=11,
         wrap=True,
     )
-    fig.tight_layout(rect=(0, 0.05, 1, 0.95))
     buf = io.BytesIO()
     fig.savefig(buf, format="png", dpi=120, bbox_inches="tight")
     plt.close(fig)
