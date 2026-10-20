@@ -4,7 +4,7 @@ Sources (``BUILDING_SOURCE`` in processing/defaults.py / notebooks/layer_config.
 
 - ``"auto"`` (default): LINZ NZ Building Outlines if the local file exists;
   otherwise OpenStreetMap buildings, first from local Geofabrik extracts in
-  ``data/osm-buildings/`` (``scripts/download_osm_buildings.py``), then from the
+  ``data/osm-buildings/`` (``scripts/download_osm.py``), then from the
   live Overpass server if no local file has buildings in the AOI.
 - ``"linz"``: LINZ only. ``"osm"``: OSM only. ``"none"``: skip building exposure.
 """
