@@ -124,8 +124,12 @@ def load_buildings(
     if source in ("auto", "linz"):
         path = resolve_building_path(configured_path)
         if path is not None:
-            return load_buildings_in_bounds(path, bounds).reset_index(drop=True), "LINZ", None
-        if source == "linz":
+            linz = load_buildings_in_bounds(path, bounds).reset_index(drop=True)
+            # LINZ covers NZ only. In "auto", an AOI with no LINZ outlines (e.g. Fiji)
+            # falls through to OSM instead of reporting a false "0 buildings".
+            if not linz.empty or source == "linz":
+                return linz, "LINZ", None
+        elif source == "linz":
             return None, "LINZ", "LINZ building outlines not found (download to data/nz-building/, see README)."
     local = load_local_osm_buildings(bounds)
     if local is not None:
