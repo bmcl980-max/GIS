@@ -66,6 +66,15 @@ Code: `processing/buildings.py`, used by notebook section 5d and the UI pipeline
 
 `BUILDING_SOURCE` (`notebooks/layer_config.py`, `processing/defaults.py`) picks the footprints: `"auto"` (default) uses LINZ if the file below exists, otherwise **OpenStreetMap** `building=*` polygons fetched for the AOI through Overpass, so the product needs no local data outside NZ. `"linz"`, `"osm"` or `"none"` force one choice. The figure and `stats["buildings_source"]` record which was used. OSM completeness varies (HOT often maps buildings after disasters), so OSM counts are a minimum. Steps 1–2 below are LINZ-only; steps 3–4 apply to both.
 
+**Offline OSM buildings for the Pacific.** The live Overpass server can be slow or time out. Run once from the repo root:
+
+```bash
+uv run python scripts/download_osm_buildings.py              # all Pacific countries (~20 small files)
+uv run python scripts/download_osm_buildings.py fiji tonga   # or just some
+```
+
+This downloads Geofabrik country extracts and writes building polygons to `data/osm-buildings/<country>.gpkg` (gitignored). With `BUILDING_SOURCE = "auto"` the loader uses LINZ, then these local files, then live Overpass. Re-run to pick up recent OSM edits. Roads are still fetched live (detours need a routable network graph).
+
 1. **Download.** Export *NZ Building Outlines* from the LINZ Data Service as a shapefile (WGS 84 or NZTM2000 both work) and unzip it into `data/nz-building/`. The path is `BUILDING_OUTLINES_PATH` in `notebooks/layer_config.py` and `processing/defaults.py`. Shapefile sidecars are gitignored.
 2. **Clip to the AOI.** `gpd.read_file(path, bbox=AOI_BOUNDS)` reads only outlines inside the AOI rectangle (the national file is large), reprojected to WGS 84. This is `buildings_in_aoi`.
 3. **Bring the flood to the client.** `flood_boundary` (Earth Engine `FeatureCollection`) is pulled with `getInfo()` and turned into a GeoDataFrame in WGS 84.

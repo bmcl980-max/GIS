@@ -72,9 +72,9 @@ _OVERPASS_URLS = (
     "https://overpass-api.de/api",
     "https://overpass.kumi.systems/api",
 )
-# Try order: main server, mirror, then the main server once more after a pause.
-_OVERPASS_ATTEMPTS = (_OVERPASS_URLS[0], _OVERPASS_URLS[1], _OVERPASS_URLS[0])
-_OVERPASS_TIMEOUT_S = 120
+# Try order: main server, then the mirror (180 s each, as before the lock was added).
+_OVERPASS_ATTEMPTS = _OVERPASS_URLS
+_OVERPASS_TIMEOUT_S = 180
 _OVERPASS_RETRY_PAUSE_S = 5
 # Public Overpass servers limit concurrent requests per user, and osmnx settings
 # are global. Roads and buildings therefore run one at a time behind this lock.

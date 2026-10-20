@@ -2,8 +2,10 @@
 
 Sources (``BUILDING_SOURCE`` in processing/defaults.py / notebooks/layer_config.py):
 
-- ``"auto"`` (default): LINZ NZ Building Outlines if the local file exists,
-  otherwise OpenStreetMap ``building=*`` polygons for the AOI (global, no download).
+- ``"auto"`` (default): LINZ NZ Building Outlines if the local file exists;
+  otherwise OpenStreetMap buildings, first from local Geofabrik extracts in
+  ``data/osm-buildings/`` (``scripts/download_osm_buildings.py``), then from the
+  live Overpass server if no local file has buildings in the AOI.
 - ``"linz"``: LINZ only. ``"osm"``: OSM only. ``"none"``: skip building exposure.
 """
 
@@ -39,6 +41,33 @@ def resolve_building_path(configured: str | None = None) -> Path | None:
 
 
 BUILDING_SOURCES = ("auto", "linz", "osm", "none")
+OSM_EXTRACT_DIR = _REPO / "data" / "osm-buildings"
+
+
+def load_local_osm_buildings(bounds: list[float]) -> gpd.GeoDataFrame | None:
+    """Buildings from local OSM extracts that fall inside the AOI, or None.
+
+    Every ``data/osm-buildings/*.gpkg`` is read with a bbox filter (spatial
+    index, so cheap). Returns None when no file has buildings in the AOI, so the
+    caller can try the live server. File extents are not used to decide coverage
+    because countries spanning the antimeridian (Fiji, Kiribati, ...) have
+    world-wide bounding boxes.
+    """
+    import pandas as pd
+
+    files = sorted(OSM_EXTRACT_DIR.glob("*.gpkg"))
+    if not files:
+        return None
+    west, south, east, north = bounds
+    parts = []
+    for path in files:
+        gdf = gpd.read_file(path, bbox=(west, south, east, north))
+        if not gdf.empty:
+            parts.append(gdf.to_crs(WGS84))
+    if not parts:
+        return None
+    gdf = gpd.GeoDataFrame(pd.concat(parts, ignore_index=True), geometry="geometry", crs=WGS84)
+    return gdf[gdf.intersects(box(west, south, east, north))].reset_index(drop=True)
 
 
 def fetch_osm_buildings(bounds: list[float]) -> gpd.GeoDataFrame:
@@ -97,6 +126,9 @@ def load_buildings(
             return load_buildings_in_bounds(path, bounds).reset_index(drop=True), "LINZ", None
         if source == "linz":
             return None, "LINZ", "LINZ building outlines not found (download to data/nz-building/, see README)."
+    local = load_local_osm_buildings(bounds)
+    if local is not None:
+        return local, "OSM", None
     try:
         return fetch_osm_buildings(bounds), "OSM", None
     except Exception as exc:  # noqa: BLE001 — Overpass must not fail the flood run
