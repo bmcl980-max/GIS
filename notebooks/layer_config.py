@@ -64,6 +64,10 @@ SENTINEL1_ENL = 4.9                # equivalent number of looks, IW GRD (for Lee
 # Dual-pol water index WI = VV_dB + VH_dB. Used with Otsu: a pixel is water only
 # if WI < Otsu(WI) AND WI < this cap. Do not lower this just to drop runways.
 WATER_INDEX_MAX_DB = -32.0
+# Keep only the relative orbit + pass of the scene closest to FLOOD_PEAK_DATE for
+# both the event and historical stacks, so ΔWI compares one viewing geometry.
+# False = mix all tracks (the earlier behaviour).
+MATCH_ORBIT = True
 # Mean WI over this many years ending at START_DATE (event window excluded).
 HIST_LOOKBACK_YEARS = 1.0
 # Flood-change cut: event WI must be at least this many dB below the historical

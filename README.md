@@ -163,9 +163,9 @@ There is no pre-event optical change test in this branch. Clouds, cloud shadow, 
 
 Pixel areas are summed at 20 m (`AREA_SCALE`). From those areas:
 
-`precision = TP / (TP + FP)` · `recall = TP / (TP + FN)` · `F1 = 2PR / (P + R)` · `IoU = TP / (TP + FP + FN)`
+`precision = TP / (TP + FP)` · `recall = TP / (TP + FN)` · `F1 = 2PR / (P + R)` · `IoU = TP / (TP + FP + FN)` · Cohen's kappa from the same 2×2 table
 
-This example is Cyclone Gabrielle, **±5 km at** `[-39.58, 176.88]`, event window 12–17 Feb 2023: **IoU = 0.74**, **F1 = 0.85**.
+This example is Cyclone Gabrielle, **±5 km at** `[-39.58, 176.88]`, event window 12–17 Feb 2023. Current scores are written to `outputs/validation/scores.csv` by `04_validation.ipynb`. The last mixed-orbit run (before `MATCH_ORBIT`) gave precision 0.96, recall 0.63, **F1 0.76**, **IoU 0.62**, kappa ≈ 0.71; urban recall 0.002 vs non-urban 0.65.
 
 ![Agreement between Sentinel-1 flood and Dragonfly 14 Feb 2023 flood extent](outputs/validation/agreement.png)
 

@@ -211,7 +211,7 @@ def _gmm_component_table(
 
 
 def _pick_flood_component(table: list[dict[str, float]]) -> int:
-    """Flood = darkest (low WI) among components that darkened vs history."""
+    """Flood = highest score (ΔWI/σ − WI_z) among components that darkened vs history."""
     changed = [i for i, row in enumerate(table) if row["dwi_mean_db"] > 0]
     pool = changed if changed else range(len(table))
     return max(pool, key=lambda i: table[i]["score"])
@@ -228,7 +228,7 @@ def fit_gmm_flood_cluster(
 
     Matches notebooks/01_sentinel1_layer.ipynb section 3. Replaces a fixed
     Otsu threshold + WI_CHANGE_MIN_DB cut: the flood component is named by
-    physics (lowest WI among components with positive mean ΔWI), not a
+    physics (highest ΔWI/σ − WI_z among components with positive mean ΔWI), not a
     hand-set dB cutoff. WorldCover/JRC/DEM stay out of the feature vector —
     they are post-processing masks applied by the caller, same as before.
 
@@ -667,7 +667,6 @@ def run_flood_mapping(
                 .filterBounds(aoi)
                 .filterDate(start_d, end_d)
                 .filter(ee.Filter.eq("instrumentMode", "IW"))
-                # .filter(ee.Filter.eq("orbitProperties_pass", "DESCENDING"))
                 .filter(ee.Filter.eq("resolution_meters", 10))
                 .select(["VV", "VH", "angle"])
             )
@@ -687,6 +686,19 @@ def run_flood_mapping(
         closest = ee.Image(co_with_diff.sort("peak_diff_days").first())
         closest_id = closest.get("system:index").getInfo()
         peak_diff = float(closest.get("peak_diff_days").getInfo())
+        rel_orbit = closest.get("relativeOrbitNumber_start").getInfo()
+        orbit_pass = closest.get("orbitProperties_pass").getInfo()
+
+        def same_track(col: ee.ImageCollection) -> ee.ImageCollection:
+            """Keep the peak scene's relative orbit + pass so ΔWI compares one geometry."""
+            if not cfg.MATCH_ORBIT:
+                return col
+            return col.filter(ee.Filter.eq("relativeOrbitNumber_start", rel_orbit)).filter(
+                ee.Filter.eq("orbitProperties_pass", orbit_pass)
+            )
+
+        co_col = same_track(co_col)
+        n_co = int(co_col.size().getInfo())
 
         def mask_s2_clouds(image: ee.Image) -> ee.Image:
             qa = image.select("QA60")
@@ -743,7 +755,7 @@ def run_flood_mapping(
         hist_start = (
             date.fromisoformat(start) - timedelta(days=int(round(365.25 * cfg.HIST_LOOKBACK_YEARS)))
         ).isoformat()
-        hist_col = s1_iw_vv_vh_angle(hist_start, hist_end)
+        hist_col = same_track(s1_iw_vv_vh_angle(hist_start, hist_end))
         n_hist = int(hist_col.size().getInfo())
         if n_hist <= 0:
             raise ValueError(
@@ -905,6 +917,9 @@ def run_flood_mapping(
             "end_date": end,
             "peak_date": peak,
             "s1_scenes": n_co,
+            "s1_relative_orbit": rel_orbit,
+            "s1_orbit_pass": orbit_pass,
+            "match_orbit": bool(cfg.MATCH_ORBIT),
             "s1_hist_scenes": n_hist,
             "s1_hist_start": hist_start,
             "s1_hist_end": hist_end,

@@ -24,6 +24,8 @@ MMU_PIXELS = 8
 WORKING_SCALE = 30
 SENTINEL1_ENL = 4.9
 HIST_LOOKBACK_YEARS = 1.0
+# Event + historical stacks use only the track of the scene closest to the peak.
+MATCH_ORBIT = True
 EXCLUDE_WORLDCOVER_CLASSES: tuple[int, ...] = ()
 
 # Unsupervised flood cluster: 2-D GMM on standardised (WI, ΔWI). Replaces a
