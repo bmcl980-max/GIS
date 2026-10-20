@@ -155,77 +155,13 @@ def _predict_water_prob(chw: np.ndarray, valid: np.ndarray, bundle: dict[str, An
     return out
 
 
-def _nice_scale_km(width_km: float) -> float:
-    target = max(width_km * 0.22, 0.5)
-    chosen = 0.5
-    for value in (0.5, 1, 2, 5, 10, 20, 50):
-        if value <= target:
-            chosen = value
-    return chosen
+def _add_map_furniture(ax, width_km: float) -> None:
+    """Alternating scale bar + north arrow on an imshow panel in pixel coordinates."""
+    from processing.map_furniture import add_north_arrow, add_scale_bar
 
-
-def _add_scale_bar(ax, width_km: float) -> None:
-    import matplotlib.patheffects as pe
-    from matplotlib.patches import Rectangle
-
-    img = ax.get_images()[0]
-    height_px, width_px = img.get_array().shape[:2]
-    scale_km = _nice_scale_km(width_km)
-    bar_px = scale_km / width_km * width_px
-    bar_h = max(height_px * 0.012, 4)
-    x0, y0 = width_px * 0.06, height_px * 0.92 - bar_h
-    ax.add_patch(
-        Rectangle(
-            (x0, y0),
-            bar_px,
-            bar_h,
-            transform=ax.transData,
-            facecolor="white",
-            edgecolor="black",
-            linewidth=1.4,
-            zorder=5,
-        )
-    )
-    ax.text(
-        x0 + bar_px / 2,
-        y0 - height_px * 0.01,
-        f"{scale_km:g} km",
-        ha="center",
-        va="bottom",
-        fontsize=8,
-        color="white",
-        zorder=6,
-        path_effects=[pe.withStroke(linewidth=3, foreground="black")],
-    )
-
-
-def _add_north_arrow(ax) -> None:
-    import matplotlib.patheffects as pe
-
-    ax.annotate(
-        "",
-        xy=(0.93, 0.92),
-        xytext=(0.93, 0.76),
-        xycoords="axes fraction",
-        textcoords="axes fraction",
-        arrowprops=dict(arrowstyle="-|>", color="black", lw=4.2, mutation_scale=16),
-        zorder=5,
-    )
-    ax.annotate(
-        "N",
-        xy=(0.93, 0.92),
-        xytext=(0.93, 0.76),
-        xycoords="axes fraction",
-        textcoords="axes fraction",
-        ha="center",
-        va="center",
-        fontsize=10,
-        fontweight="bold",
-        color="white",
-        path_effects=[pe.withStroke(linewidth=3.5, foreground="black")],
-        arrowprops=dict(arrowstyle="-|>", color="white", lw=2.2, mutation_scale=14),
-        zorder=6,
-    )
+    width_px = ax.get_images()[0].get_array().shape[1]
+    add_scale_bar(ax, width_km / width_px)
+    add_north_arrow(ax)
 
 
 def _figure_png_b64(
@@ -264,8 +200,8 @@ def _figure_png_b64(
     axes[2].set_title("Final flood (event − permanent − DEM)")
     for ax in axes:
         ax.set_axis_off()
-    _add_scale_bar(axes[0], width_km)
-    _add_north_arrow(axes[0])
+    for ax in axes:
+        _add_map_furniture(ax, width_km)
     axes[1].legend(
         handles=[
             Patch(facecolor="#3182bd", edgecolor="0.2", linewidth=0.4, alpha=0.7, label="U-Net water")

@@ -69,6 +69,7 @@ from processing.buildings import (
 )
 from processing.roads import classify_roads_with_flood, draw_roads_panel, fetch_osm_drive_edges, short_osm_error
 from processing.s1_tracks import choose_track, filter_track
+from processing.map_furniture import add_north_arrow, add_scale_bar
 
 
 def _report_section_flags() -> tuple[bool, bool, bool, bool]:
@@ -362,95 +363,6 @@ def _worldcover_rgb(worldcover: ee.Image) -> ee.Image:
     return indexed.visualize(min=0, max=len(codes) - 1, palette=palette)
 
 
-def _nice_scale_km(width_km: float) -> float:
-    target = max(width_km * 0.22, 0.5)
-    candidates = (0.5, 1, 2, 5, 10, 20, 50)
-    chosen = candidates[0]
-    for value in candidates:
-        if value <= target:
-            chosen = value
-    return chosen
-
-
-def _add_scale_bar(ax, width_km: float) -> None:
-    """Scale bar in the lower-left, in the axes' lon/lat data coordinates."""
-    import matplotlib.patheffects as pe
-    from matplotlib.patches import Rectangle
-
-    x_min, x_max = ax.get_xlim()
-    y_min, y_max = ax.get_ylim()
-    deg_per_km = (x_max - x_min) / width_km
-    scale_km = _nice_scale_km(width_km)
-    bar_w = scale_km * deg_per_km
-    bar_h = (y_max - y_min) * 0.012
-    x0 = x_min + (x_max - x_min) * 0.06
-    y0 = y_min + (y_max - y_min) * 0.06
-    ax.add_patch(
-        Rectangle(
-            (x0, y0),
-            bar_w,
-            bar_h,
-            facecolor="white",
-            edgecolor="black",
-            linewidth=1.4,
-            zorder=5,
-        )
-    )
-    ax.text(
-        x0 + bar_w / 2,
-        y0 + bar_h + (y_max - y_min) * 0.012,
-        f"{scale_km:g} km",
-        ha="center",
-        va="bottom",
-        fontsize=8,
-        color="white",
-        zorder=6,
-        path_effects=[pe.withStroke(linewidth=3, foreground="black")],
-    )
-
-
-def _add_north_arrow(ax) -> None:
-    """White north arrow with a black halo so it reads on dark SAR."""
-    import matplotlib.patheffects as pe
-
-    halo = [pe.withStroke(linewidth=3.5, foreground="black")]
-    ax.annotate(
-        "N",
-        xy=(0.93, 0.92),
-        xytext=(0.93, 0.76),
-        xycoords="axes fraction",
-        textcoords="axes fraction",
-        ha="center",
-        va="center",
-        fontsize=10,
-        fontweight="bold",
-        color="white",
-        path_effects=halo,
-        arrowprops=dict(
-            arrowstyle="-|>",
-            color="white",
-            lw=2.2,
-            mutation_scale=14,
-        ),
-        zorder=6,
-    )
-    # Outline the arrow shaft (annotate arrowprops ignore path_effects).
-    ax.annotate(
-        "",
-        xy=(0.93, 0.92),
-        xytext=(0.93, 0.76),
-        xycoords="axes fraction",
-        textcoords="axes fraction",
-        arrowprops=dict(
-            arrowstyle="-|>",
-            color="black",
-            lw=4.2,
-            mutation_scale=16,
-        ),
-        zorder=5,
-    )
-
-
 def _add_landcover_legend(ax) -> None:
     from matplotlib.patches import Patch
 
@@ -574,8 +486,10 @@ def _figure_png_b64(
     axes[0][1].set_title(f"Water index (VV+VH) + final flood\nS1 closest to peak: {s1_when}")
     axes[0][0].set_axis_off()
     axes[0][1].set_axis_off()
-    _add_scale_bar(axes[0][0], width_km)
-    _add_north_arrow(axes[0][0])
+    km_per_deg_lon = 111.32 * math.cos(math.radians(lat0))
+    for ax in (axes[0][0], axes[0][1]):
+        add_scale_bar(ax, km_per_deg_lon)
+        add_north_arrow(ax)
     _add_flood_legend(axes[0][1])
     bldg_bounds = bounds or _wgs84_bounds(flood_gdf, buildings_aoi, buildings_affected)
     has_buildings = (buildings_aoi is not None and not buildings_aoi.empty) or (
