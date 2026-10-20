@@ -47,7 +47,6 @@ WC_CLASSES: list[tuple[int, str, str]] = [
     (95, "Mangroves", "#00cf75"),
     (100, "Moss / lichen", "#fae6a0"),
 ]
-FLOOD_COLOR = "#ffff00"
 
 import ee
 import matplotlib
@@ -69,7 +68,7 @@ from processing.buildings import (
 )
 from processing.roads import classify_roads_with_flood, draw_roads_panel, fetch_osm_drive_edges, short_osm_error
 from processing.s1_tracks import choose_track, filter_track
-from processing.map_furniture import add_north_arrow, add_scale_bar
+from processing.map_furniture import FLOOD_COLOR, FLOOD_LABEL, add_north_arrow, add_scale_bar
 
 
 def _report_section_flags() -> tuple[bool, bool, bool, bool]:
@@ -371,7 +370,7 @@ def _add_landcover_legend(ax) -> None:
         for _, label, color in WC_CLASSES
     ]
     handles.append(
-        Patch(facecolor=FLOOD_COLOR, edgecolor="0.2", linewidth=0.4, label="Final flood")
+        Patch(facecolor=FLOOD_COLOR, edgecolor="0.2", linewidth=0.4, label=FLOOD_LABEL)
     )
     ax.legend(
         handles=handles,
@@ -398,7 +397,7 @@ def _add_flood_legend(ax) -> None:
 
     ax.legend(
         handles=[
-            Patch(facecolor=FLOOD_COLOR, edgecolor="0.2", linewidth=0.4, label="Final flood"),
+            Patch(facecolor=FLOOD_COLOR, edgecolor="0.2", linewidth=0.4, label=FLOOD_LABEL),
         ],
         loc="lower right",
         fontsize=8,
@@ -456,7 +455,7 @@ def _figure_png_b64(
     import base64
 
     s1_when = s1_index_datetime(closest_id)
-    flood_fill = final_flood.selfMask().visualize(palette=[FLOOD_COLOR], opacity=0.55)
+    flood_fill = final_flood.selfMask().visualize(palette=[FLOOD_COLOR])  # opaque: legend matches
     left_img = co_db.select("VV").visualize(**VV_VIS)
     right_img = water_index.visualize(**WI_VIS).blend(flood_fill)
     left = _ee_thumb_array(left_img, None, aoi, cfg.THUMB_DIMENSIONS)
@@ -483,7 +482,7 @@ def _figure_png_b64(
     for ax in (axes[0][0], axes[0][1]):
         _frame(ax)
     axes[0][0].set_title(f"Sentinel-1 VV (dB)\nS1 closest to peak: {s1_when}")
-    axes[0][1].set_title(f"Water index (VV+VH) + final flood\nS1 closest to peak: {s1_when}")
+    axes[0][1].set_title(f"Water index (VV+VH) + flood extent\nS1 closest to peak: {s1_when}")
     axes[0][0].set_axis_off()
     axes[0][1].set_axis_off()
     km_per_deg_lon = 111.32 * math.cos(math.radians(lat0))
@@ -566,7 +565,7 @@ def _figure_png_b64(
     fig.text(
         0.5,
         0.01,
-        f"Figure: Final flood extent (yellow) = {flood_km2 * 1e6:,.0f} m² "
+        f"Figure: Flood extent (olive) = {flood_km2 * 1e6:,.0f} m² "
         f"({flood_km2:,.2f} km², {pct:.1f}% of the {aoi_km2:,.1f} km² AOI). "
         f"Urban flooded: {flooded_urban_km2:,.2f} km² ({urban_pct:.1f}% of the flood)."
         f"{extra} Roads{' and buildings' if buildings_source == 'OSM' else ''} © OpenStreetMap contributors (ODbL).",

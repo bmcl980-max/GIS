@@ -23,7 +23,7 @@ from processing import defaults as cfg
 
 NZTM = "EPSG:2193"
 WGS84 = "EPSG:4326"
-FLOOD_COLOR = "#ffff00"
+from processing.map_furniture import FLOOD_COLOR, FLOOD_LABEL  # noqa: E402
 CLOSED_COLOR = "#d01c8b"
 OPEN_COLOR = "#1b9e77"
 
@@ -81,6 +81,10 @@ _OVERPASS_RETRY_PAUSE_S = 5
 # Public Overpass servers limit concurrent requests per user, and osmnx settings
 # are global. Roads and buildings therefore run one at a time behind this lock.
 _OVERPASS_LOCK = threading.Lock()
+# After every server has failed, skip Overpass for this long instead of waiting out
+# the timeouts again (roads then buildings could otherwise wait ~12 minutes).
+_OVERPASS_COOLDOWN_S = 600
+_overpass_down_until = 0.0
 
 
 def overpass_call(fn: Callable[[], Any], what: str) -> Any:
@@ -91,7 +95,12 @@ def overpass_call(fn: Callable[[], Any], what: str) -> Any:
     """
     import osmnx as ox
 
+    global _overpass_down_until
     with _OVERPASS_LOCK:
+        if time.time() < _overpass_down_until:
+            raise RuntimeError(
+                f"OSM Overpass failed for {what}: skipped, servers timed out on an earlier request (ReadTimeout)"
+            )
         ox.settings.use_cache = True
         ox.settings.requests_timeout = _OVERPASS_TIMEOUT_S
         # Skip osmnx's slot-wait; the attempt list and lock handle pacing instead.
@@ -107,6 +116,7 @@ def overpass_call(fn: Callable[[], Any], what: str) -> Any:
                 if type(exc).__name__ == "InsufficientResponseError":
                     raise
                 last_exc = exc
+        _overpass_down_until = time.time() + _OVERPASS_COOLDOWN_S
     raise RuntimeError(f"OSM Overpass failed for {what}: {type(last_exc).__name__}: {last_exc}") from last_exc
 
 
@@ -489,7 +499,7 @@ def draw_roads_panel(
         west, south, east, north = bounds
     if flood is not None and not flood.empty:
         flood.to_crs(WGS84).plot(
-            ax=ax, facecolor=FLOOD_COLOR, edgecolor="none", alpha=0.45, zorder=1
+            ax=ax, facecolor=FLOOD_COLOR, edgecolor="none", zorder=1
         )
     n_open = 0
     if roads_open is not None and not roads_open.empty:
@@ -515,7 +525,7 @@ def draw_roads_panel(
     )
     ax.legend(
         handles=[
-            Patch(facecolor=FLOOD_COLOR, edgecolor="0.2", linewidth=0.4, label="Final flood"),
+            Patch(facecolor=FLOOD_COLOR, edgecolor="0.2", linewidth=0.4, label=FLOOD_LABEL),
             Line2D([0], [0], color=CLOSED_COLOR, linewidth=2.2, label="Flood affected road"),
             Line2D([0], [0], color=OPEN_COLOR, linewidth=1.4, label="Not flood affected road"),
         ],

@@ -175,16 +175,19 @@ def _figure_png_b64(
 
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
+    from matplotlib.colors import ListedColormap
     from matplotlib.patches import Patch
 
+    from processing.map_furniture import FLOOD_COLOR, FLOOD_LABEL
+
+    WATER_COLOR = "#3182bd"
     fig, axes = plt.subplots(1, 3, figsize=(15, 5.4))
     axes[0].imshow(rgb)
     axes[0].set_title(f"Event L1C RGB\n{scene_id}")
     axes[1].imshow(rgb)
     axes[1].imshow(
         np.ma.masked_where(~event_water, event_water),
-        cmap="Blues",
-        alpha=0.55,
+        cmap=ListedColormap([WATER_COLOR]),  # opaque single colour: legend matches
         vmin=0,
         vmax=1,
     )
@@ -192,19 +195,18 @@ def _figure_png_b64(
     axes[2].imshow(rgb)
     axes[2].imshow(
         np.ma.masked_where(~final_flood, final_flood),
-        cmap="autumn",
-        alpha=0.7,
+        cmap=ListedColormap([FLOOD_COLOR]),
         vmin=0,
         vmax=1,
     )
-    axes[2].set_title("Final flood (event − permanent − DEM)")
+    axes[2].set_title("Flood extent (event water − permanent − DEM)")
     for ax in axes:
         ax.set_axis_off()
     for ax in axes:
         _add_map_furniture(ax, width_km)
     axes[1].legend(
         handles=[
-            Patch(facecolor="#3182bd", edgecolor="0.2", linewidth=0.4, alpha=0.7, label="U-Net water")
+            Patch(facecolor=WATER_COLOR, edgecolor="0.2", linewidth=0.4, label="U-Net water")
         ],
         loc="lower right",
         fontsize=8,
@@ -212,7 +214,7 @@ def _figure_png_b64(
     )
     axes[2].legend(
         handles=[
-            Patch(facecolor="#ffff00", edgecolor="0.2", linewidth=0.4, alpha=0.8, label="Final flood")
+            Patch(facecolor=FLOOD_COLOR, edgecolor="0.2", linewidth=0.4, label=FLOOD_LABEL)
         ],
         loc="lower right",
         fontsize=8,

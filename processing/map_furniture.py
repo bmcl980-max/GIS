@@ -25,6 +25,11 @@ from matplotlib.offsetbox import (
 from matplotlib.patches import Polygon, Rectangle
 from matplotlib.text import Text
 
+# One flood colour for every map and legend, drawn opaque so the legend swatch
+# matches the map exactly (a translucent fill changes colour with what is under it).
+FLOOD_COLOR = "#93a532"
+FLOOD_LABEL = "Flood extent"
+
 _NICE_KM = (0.1, 0.2, 0.25, 0.5, 1, 2, 2.5, 5, 10, 20, 25, 50, 100, 200, 500)
 _BACKING = {"facecolor": "white", "edgecolor": "0.55", "linewidth": 0.5, "alpha": 0.88}
 
@@ -100,7 +105,7 @@ def add_scale_bar(
                 label_y,
                 text,
                 ha="center",
-                va="bottom" if y_up > 0 else "top",
+                va="bottom",  # label_y is above the bar on screen for either axis direction
                 fontsize=fontsize,
                 color="black",
             )

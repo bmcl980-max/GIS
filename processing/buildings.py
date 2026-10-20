@@ -17,6 +17,8 @@ from typing import Any
 import geopandas as gpd
 from shapely.geometry import box, shape
 
+from processing.map_furniture import FLOOD_COLOR, FLOOD_LABEL
+
 NZTM = "EPSG:2193"
 WGS84 = "EPSG:4326"
 
@@ -275,7 +277,7 @@ def draw_buildings_panel(
         west, south, east, north = bounds
     if flood is not None and not flood.empty:
         flood.to_crs(WGS84).plot(
-            ax=ax, facecolor="#ffff00", edgecolor="none", alpha=0.45, zorder=1
+            ax=ax, facecolor=FLOOD_COLOR, edgecolor="none", zorder=1
         )
     if buildings_aoi is not None and not buildings_aoi.empty:
         buildings_aoi.to_crs(WGS84).plot(
@@ -308,7 +310,7 @@ def draw_buildings_panel(
         ax.text(0.01, 0.01, credit, transform=ax.transAxes, fontsize=6, color="0.3")
     ax.legend(
         handles=[
-            Patch(facecolor="#ffff00", edgecolor="0.2", linewidth=0.4, label="Final flood"),
+            Patch(facecolor=FLOOD_COLOR, edgecolor="0.2", linewidth=0.4, label=FLOOD_LABEL),
             Patch(facecolor="#d73027", edgecolor="#7f0000", linewidth=0.4, label="Affected building"),
             Patch(facecolor="none", edgecolor="#888888", linewidth=0.8, label="Building in AOI"),
         ],
