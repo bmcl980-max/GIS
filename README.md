@@ -2,7 +2,7 @@
 
 GEOG761 group project: mapping **flood and inundation extent** after a disaster, as the entry point for choosing a sea-logistics / HA-DR site.
 
-The Sentinel-1 notebook (`01_sentinel1_layer.ipynb`) is the method of record. The map UI uses calendar dates and a Leaflet AOI, without editing `layer_config.py` for coordinates or dates. Flood is an **unsupervised 2-D GMM** cluster on event `WI` and historical `ΔWI` (dark **and** newly darker than a multi-year mean). That replaces the earlier 1-D **Otsu** cut on WI plus a fixed `ΔWI` dB threshold.
+The Sentinel-1 notebook (`01_sentinel1_layer.ipynb`) is the method of record. The map UI uses calendar dates and a Leaflet AOI, without editing `layer_config.py` for coordinates or dates. Flood is an **unsupervised 2-D GMM** cluster on event `WI` and historical `ΔWI` (dark **and** newly darker than a one-year same-track mean). That replaces the earlier 1-D **Otsu** cut on WI plus a fixed `ΔWI` dB threshold.
 
 ---
 
@@ -48,7 +48,7 @@ Selecting a suitable site for logistics supply from sea, immediately following a
 
 1. **Prep** — clip to a rectangular AOI; convert dB → linear power; Lee speckle filter; simplified cosine terrain flatten; back to dB. The **same** recipe is applied to the event stack and to the historical stack.
 2. **Features** — dual-pol index `WI = VV_dB + VH_dB`. Historical change `ΔWI = WI_hist − WI_event` (positive = newly darker than the lookback mean). Always-dark water and pavement stay near `ΔWI ≈ 0`.
-3. **Unsupervised 2-D GMM / k-means** — this step **replaces Otsu**. Standardise (`WI`, `ΔWI`); sample AOI pixels with permanent water excluded so the sea does not dominate the fit; fit a **4-component GMM** (`sklearn.mixture.GaussianMixture`, full covariance) and **k-means** on the same samples. Flood is the component with the **lowest WI among those with positive mean ΔWI**. Permanent dark water sits at low WI and `ΔWI ≈ 0`; dry land is brighter. GMM is the map; k-means is comparison only. There is no WI histogram threshold and no `WI_CHANGE_MIN_DB` cut.
+3. **Unsupervised 2-D GMM / k-means** — this step **replaces Otsu**. Standardise (`WI`, `ΔWI`); sample AOI pixels with permanent water excluded so the sea does not dominate the fit; fit a **4-component GMM** (`sklearn.mixture.GaussianMixture`, full covariance) and **k-means** on the same samples. Flood is the component with the **highest score `ΔWI/σ(ΔWI) − WI_z` among those with positive mean ΔWI** (dark and strongly darkened). Permanent dark water sits at low WI and `ΔWI ≈ 0`; dry land is brighter. GMM is the map; k-means is comparison only. There is no WI histogram threshold and no `WI_CHANGE_MIN_DB` cut.
 4. **Flood candidate** — GMM flood cluster, then drop WorldCover 80, JRC occurrence ≥ threshold, DEM nodata (open sea), and optional WorldCover 50/60. WorldCover / JRC / DEM are **post-masks**, not GMM features.
 5. **Terrain** — drop high ground (`ELEVATION_MAX_M` and optional height above AOI FABDEM p5) and slopes steeper than `SLOPE_MAX_DEG`; layover/shadow *risk proxy* from slope vs incidence angle. Elevation is **FABDEM** (bare earth), not raw Copernicus GLO-30 (DSM with buildings/trees).
 6. **Clean** — minimum mapping unit, then a small morphological opening.
