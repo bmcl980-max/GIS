@@ -4,13 +4,14 @@ Shared by the app figure (processing/pipeline.py), the Sentinel-2 figure
 (processing/s2_pipeline.py) and the notebooks, so every map uses the same symbols.
 
 - ``add_scale_bar``: ESRI-style alternating black/white bar with tick labels
-  (``0  1  2 km``) on a white backing box, sized to a round length.
+  (``0  1  2 km``) sized to a round length.
 - ``add_north_arrow``: ESRI-style split arrowhead (left half black, right half
-  white) with an "N" above, on a white backing box. Drawn in points, so it keeps
+  white) with an "N" above. Drawn in points, so it keeps
   its shape whatever the panel's aspect ratio.
 
-Both are anchored inside the axes (offset boxes), so they stay put under
-constrained layout and never overlap titles.
+Both are anchored inside the axes (offset boxes, no frame), so they stay put
+under constrained layout and never overlap titles. A thin white halo round every
+mark and label keeps them legible on dark radar as well as on white maps.
 """
 
 from __future__ import annotations
@@ -22,6 +23,7 @@ from matplotlib.offsetbox import (
     TextArea,
     VPacker,
 )
+import matplotlib.patheffects as pe
 from matplotlib.patches import Polygon, Rectangle
 from matplotlib.text import Text
 
@@ -31,7 +33,7 @@ FLOOD_COLOR = "#93a532"
 FLOOD_LABEL = "Flood extent"
 
 _NICE_KM = (0.1, 0.2, 0.25, 0.5, 1, 2, 2.5, 5, 10, 20, 25, 50, 100, 200, 500)
-_BACKING = {"facecolor": "white", "edgecolor": "0.55", "linewidth": 0.5, "alpha": 0.88}
+_HALO = [pe.withStroke(linewidth=2.0, foreground="white")]
 
 
 def nice_scale_km(width_km: float, target_frac: float = 0.25) -> float:
@@ -46,14 +48,6 @@ def nice_scale_km(width_km: float, target_frac: float = 0.25) -> float:
 
 def _fmt_km(value: float) -> str:
     return f"{value:g}"
-
-
-def _style_frame(box: AnchoredOffsetbox) -> None:
-    box.patch.set_boxstyle("round,pad=0.25,rounding_size=0.15")
-    box.patch.set_facecolor(_BACKING["facecolor"])
-    box.patch.set_edgecolor(_BACKING["edgecolor"])
-    box.patch.set_linewidth(_BACKING["linewidth"])
-    box.patch.set_alpha(_BACKING["alpha"])
 
 
 def add_scale_bar(
@@ -92,6 +86,7 @@ def add_scale_bar(
                 facecolor="black" if i % 2 == 0 else "white",
                 edgecolor="black",
                 linewidth=0.8,
+                path_effects=_HALO,
             )
         )
     label_y = bar_h * 1.9
@@ -108,11 +103,11 @@ def add_scale_bar(
                 va="bottom",  # label_y is above the bar on screen for either axis direction
                 fontsize=fontsize,
                 color="black",
+                path_effects=_HALO,
             )
         )
 
-    anchored = AnchoredOffsetbox(loc=loc, child=box, pad=0.45, borderpad=0.7, frameon=True)
-    _style_frame(anchored)
+    anchored = AnchoredOffsetbox(loc=loc, child=box, pad=0.45, borderpad=0.7, frameon=False)
     anchored.set_zorder(10)
     ax.add_artist(anchored)
     return total_km
@@ -128,14 +123,13 @@ def add_north_arrow(ax, loc: str = "upper right", size: float = 26.0) -> None:
     head = DrawingArea(w, size, 0, 0)
     mid, notch = w / 2.0, size * 0.28
     head.add_artist(
-        Polygon([(mid, size), (0, 0), (mid, notch)], closed=True, facecolor="black", edgecolor="black", linewidth=0.8)
+        Polygon([(mid, size), (0, 0), (mid, notch)], closed=True, facecolor="black", edgecolor="black", linewidth=0.8, path_effects=_HALO)
     )
     head.add_artist(
-        Polygon([(mid, size), (w, 0), (mid, notch)], closed=True, facecolor="white", edgecolor="black", linewidth=0.8)
+        Polygon([(mid, size), (w, 0), (mid, notch)], closed=True, facecolor="white", edgecolor="black", linewidth=0.8, path_effects=_HALO)
     )
-    label = TextArea("N", textprops={"fontsize": 10, "fontweight": "bold", "color": "black"})
+    label = TextArea("N", textprops={"fontsize": 10, "fontweight": "bold", "color": "black", "path_effects": _HALO})
     pack = VPacker(children=[label, head], align="center", pad=0, sep=1)
-    anchored = AnchoredOffsetbox(loc=loc, child=pack, pad=0.35, borderpad=0.7, frameon=True)
-    _style_frame(anchored)
+    anchored = AnchoredOffsetbox(loc=loc, child=pack, pad=0.35, borderpad=0.7, frameon=False)
     anchored.set_zorder(10)
     ax.add_artist(anchored)
