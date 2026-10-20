@@ -69,6 +69,7 @@ from processing.buildings import (
     resolve_building_path,
 )
 from processing.roads import classify_roads_with_flood, draw_roads_panel, fetch_osm_drive_edges
+from processing.s1_tracks import choose_track, filter_track
 
 
 def _report_section_flags() -> tuple[bool, bool, bool, bool]:
@@ -561,7 +562,14 @@ def _figure_png_b64(
         buildings_affected is not None and not buildings_affected.empty
     )
     has_flood = flood_gdf is not None and not flood_gdf.empty
-    if bldg_bounds is not None and (has_buildings or has_flood):
+    if buildings_aoi is None:
+        axes[1][0].set_axis_off()
+        axes[1][0].text(
+            0.5, 0.5,
+            "LINZ building outlines not loaded\n(download to data/nz-building/, see README)",
+            ha="center", va="center",
+        )
+    elif bldg_bounds is not None and (has_buildings or has_flood):
         draw_buildings_panel(
             axes[1][0],
             bldg_bounds,
@@ -678,25 +686,15 @@ def run_flood_mapping(
         if n_co <= 0:
             raise ValueError("No Sentinel-1 scenes for this AOI and date range.")
 
-        peak_ee = ee.Date(peak)
-        co_with_diff = co_col.map(
-            lambda img: img.set(
-                "peak_diff_days", ee.Number(img.date().difference(peak_ee, "day")).abs()
-            )
-        )
-        closest = ee.Image(co_with_diff.sort("peak_diff_days").first())
-        closest_id = closest.get("system:index").getInfo()
-        peak_diff = float(closest.get("peak_diff_days").getInfo())
-        rel_orbit = closest.get("relativeOrbitNumber_start").getInfo()
-        orbit_pass = closest.get("orbitProperties_pass").getInfo()
+        # One orbit track: must cover >=95% of the AOI, then closest to the peak.
+        # Mixed tracks only if none covers the AOI (or MATCH_ORBIT is off).
+        track = choose_track(co_col, aoi, peak, match=bool(cfg.MATCH_ORBIT))
+        closest_id = track["closest_id"]
+        peak_diff = float(track["peak_diff_days"])
+        rel_orbit, orbit_pass = track["rel_orbit"], track["orbit_pass"]
 
         def same_track(col: ee.ImageCollection) -> ee.ImageCollection:
-            """Keep the peak scene's relative orbit + pass so ΔWI compares one geometry."""
-            if not cfg.MATCH_ORBIT:
-                return col
-            return col.filter(ee.Filter.eq("relativeOrbitNumber_start", rel_orbit)).filter(
-                ee.Filter.eq("orbitProperties_pass", orbit_pass)
-            )
+            return filter_track(col, track)
 
         co_col = same_track(co_col)
         n_co = int(co_col.size().getInfo())
@@ -921,6 +919,9 @@ def run_flood_mapping(
             "s1_relative_orbit": rel_orbit,
             "s1_orbit_pass": orbit_pass,
             "match_orbit": bool(cfg.MATCH_ORBIT),
+            "track_matched": track["matched"],
+            "track_coverage_of_aoi": track["coverage"],
+            "track_message": track["message"],
             "s1_hist_scenes": n_hist,
             "s1_hist_start": hist_start,
             "s1_hist_end": hist_end,
