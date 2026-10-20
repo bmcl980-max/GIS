@@ -168,7 +168,9 @@ Pixel areas are summed at 20 m (`AREA_SCALE`). From those areas:
 
 `precision = TP / (TP + FP)` · `recall = TP / (TP + FN)` · `F1 = 2PR / (P + R)` · `IoU = TP / (TP + FP + FN)` · Cohen's kappa from the same 2×2 table
 
-This example is Cyclone Gabrielle, **±5 km at** `[-39.58, 176.88]`, event window 12–17 Feb 2023. Current scores are written to `outputs/validation/scores.csv` by `04_validation.ipynb`. The last mixed-orbit run (before `MATCH_ORBIT`) gave precision 0.96, recall 0.63, **F1 0.76**, **IoU 0.62**, kappa ≈ 0.71; urban recall 0.002 vs non-urban 0.65.
+This example is Cyclone Gabrielle, **±5 km at** `[-39.58, 176.88]`, event window 12–17 Feb 2023. Current scores are written to `outputs/validation/scores.csv` by `04_validation.ipynb`. With `MATCH_ORBIT` (track 81 ascending, 14 Feb 2023 07:07 UTC; 50 same-track baseline scenes): precision 0.957, recall 0.638, **F1 0.766**, **IoU 0.620**, **kappa 0.712**, overall accuracy 0.909 (S1 flood 14.30 km² vs reference 21.45 km²). Urban recall 0.002 vs non-urban 0.656. Mixing orbit tracks in the baseline gave almost the same scores (F1 0.762, IoU 0.616, kappa 0.708), so the result is robust to the baseline choice.
+
+Silt overlap (Dragonfly 19/21 Feb): silt covers 30.9 km² (34% of the AOI); 67% of S1 false alarms fall on silt, about twice the AOI share, consistent with wet silt or receding water being mapped as flood.
 
 ![Agreement between Sentinel-1 flood and Dragonfly 14 Feb 2023 flood extent](outputs/validation/agreement.png)
 
