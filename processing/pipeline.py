@@ -872,6 +872,7 @@ def run_flood_mapping(
             meta_road_error_detail = None
             try:
                 osm_graph, osm_edges = osm_fut.result()
+                stats["roads_source"] = osm_graph.graph.get("source", "OSM")
                 _ground, roads_closed, roads_open, road_stats = classify_roads_with_flood(
                     bounds, flood_gdf, graph=osm_graph, edges=osm_edges
                 )

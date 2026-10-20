@@ -37,8 +37,9 @@ secrets/
 # Local downloads, model weights, pipeline products
 datasets/
 data/raw/
-# OSM building extracts made by scripts/download_osm_buildings.py (re-download, do not commit)
+# OSM extracts made by scripts/download_osm.py (re-download, do not commit)
 data/osm-buildings/
+data/osm-roads/
 output/
 *.tif
 *.tiff

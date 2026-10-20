@@ -66,14 +66,15 @@ Code: `processing/buildings.py`, used by notebook section 5d and the UI pipeline
 
 `BUILDING_SOURCE` (`notebooks/layer_config.py`, `processing/defaults.py`) picks the footprints: `"auto"` (default) uses LINZ if the file below exists, otherwise **OpenStreetMap** `building=*` polygons fetched for the AOI through Overpass, so the product needs no local data outside NZ. `"linz"`, `"osm"` or `"none"` force one choice. The figure and `stats["buildings_source"]` record which was used. OSM completeness varies (HOT often maps buildings after disasters), so OSM counts are a minimum. Steps 1–2 below are LINZ-only; steps 3–4 apply to both.
 
-**Offline OSM buildings for the Pacific.** The live Overpass server can be slow or time out. Run once from the repo root:
+**Offline OSM roads and buildings (NZ and the Pacific).** The live Overpass server is often slow or times out. Run once from the repo root:
 
 ```bash
-uv run python scripts/download_osm_buildings.py              # all Pacific countries (~20 small files)
-uv run python scripts/download_osm_buildings.py fiji tonga   # or just some
+uv run python scripts/download_osm.py              # Pacific roads + buildings, NZ roads
+uv run python scripts/download_osm.py fiji tonga   # or just some countries
+uv run python scripts/download_osm.py --refresh    # later, to pick up new OSM edits
 ```
 
-This downloads Geofabrik country extracts and writes building polygons to `data/osm-buildings/<country>.gpkg` (gitignored). With `BUILDING_SOURCE = "auto"` the loader uses LINZ, then these local files, then live Overpass. Re-run to pick up recent OSM edits. Roads are still fetched live (detours need a routable network graph).
+This downloads Geofabrik country extracts (© OpenStreetMap contributors, ODbL) and writes drivable road centrelines to `data/osm-roads/<country>.gpkg` and building polygons to `data/osm-buildings/<country>.gpkg` (both gitignored; NZ buildings come from LINZ). With `BUILDING_SOURCE = "auto"` buildings come from LINZ, then local OSM, then live Overpass. Roads come from the local extract when one covers the AOI, otherwise live Overpass; `stats["roads_source"]` records which. For local roads, `processing/roads.py` builds the routable network itself: centrelines are split at shared OSM nodes (junctions), one-way tags are respected, and edge lengths are in the local UTM zone, so detours work offline.
 
 1. **Download.** Export the whole *NZ Building Outlines* layer from the LINZ Data Service as a **GeoPackage** (national coverage; a shapefile export splits at 2 GB) and save it as `data/nz-building/nz-building-outlines.gpkg`, which is found automatically. A cropped shapefile at `data/nz-building/nz-building-outlines.shp` also works. WGS 84 or NZTM2000 both work: the AOI box is converted to the file's CRS before the spatial-index read, so only buildings in the AOI are loaded. LINZ data are CC BY 4.0. The path is `BUILDING_OUTLINES_PATH` in `notebooks/layer_config.py` and `processing/defaults.py`. Shapefile sidecars are gitignored.
 2. **Clip to the AOI.** `gpd.read_file(path, bbox=...)` with the AOI box in the file's CRS reads only outlines inside the AOI rectangle (the national file is large), reprojected to WGS 84. This is `buildings_in_aoi`.
