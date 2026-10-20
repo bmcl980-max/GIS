@@ -22,6 +22,7 @@ WGS84 = "EPSG:4326"
 
 _REPO = Path(__file__).resolve().parents[1]
 _DEFAULT_PATHS = (
+    "data/nz-building/nz-building-outlines.gpkg",
     "data/nz-building/nz-building-outlines.shp",
     "data/nz-bulding/nz-building-outlines.shp",
 )
@@ -61,7 +62,7 @@ def load_local_osm_buildings(bounds: list[float]) -> gpd.GeoDataFrame | None:
     west, south, east, north = bounds
     parts = []
     for path in files:
-        gdf = gpd.read_file(path, bbox=(west, south, east, north))
+        gdf = gpd.read_file(path, bbox=_bbox_in_file_crs(path, bounds))
         if not gdf.empty:
             parts.append(gdf.to_crs(WGS84))
     if not parts:
@@ -161,11 +162,29 @@ def ee_fc_to_gdf(fc) -> gpd.GeoDataFrame:
     return fc_payload_to_gdf(fc.getInfo())
 
 
+def _bbox_in_file_crs(path: Path, bounds: list[float], layer: str | None = None) -> tuple[float, ...]:
+    """AOI [west, south, east, north] (WGS84) as a bbox in the file's own CRS.
+
+    pyogrio applies a tuple bbox in the dataset CRS, so a WGS84 box on an
+    NZTM2000 file would select nothing.
+    """
+    import pyogrio
+
+    crs = pyogrio.read_info(path, layer=layer).get("crs")
+    aoi = gpd.GeoSeries([box(*bounds)], crs=WGS84)
+    if crs:
+        aoi = aoi.to_crs(crs)
+    return tuple(float(v) for v in aoi.total_bounds)
+
+
 def load_buildings_in_bounds(path: Path, bounds: list[float]) -> gpd.GeoDataFrame:
-    """Load LINZ outlines clipped to [west, south, east, north] in WGS84."""
+    """Load LINZ outlines clipped to [west, south, east, north] in WGS84.
+
+    Works for a national file: GeoPackage / shapefile spatial indexes mean only
+    features in the AOI bbox are read. The file may be in WGS84 or NZTM2000.
+    """
     west, south, east, north = bounds
-    bbox = (west, south, east, north)
-    gdf = gpd.read_file(path, bbox=bbox)
+    gdf = gpd.read_file(path, bbox=_bbox_in_file_crs(path, bounds))
     if gdf.empty:
         return gdf.set_crs(WGS84) if gdf.crs is None else gdf
     if gdf.crs is None:
@@ -277,8 +296,12 @@ def draw_buildings_panel(
     ax.set_axis_off()
     n = 0 if buildings_affected is None or buildings_affected.empty else len(buildings_affected)
     ax.set_title(f"{source_label} building outlines ∩ flood\n{n:,} buildings affected")
-    if source_label == "OSM":
-        ax.text(0.01, 0.01, "© OpenStreetMap contributors", transform=ax.transAxes, fontsize=6, color="0.3")
+    credit = {
+        "OSM": "© OpenStreetMap contributors",
+        "LINZ": "Sourced from LINZ, CC BY 4.0",
+    }.get(source_label)
+    if credit:
+        ax.text(0.01, 0.01, credit, transform=ax.transAxes, fontsize=6, color="0.3")
     ax.legend(
         handles=[
             Patch(facecolor="#ffff00", edgecolor="0.2", linewidth=0.4, label="Final flood"),

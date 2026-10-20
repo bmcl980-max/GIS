@@ -40,6 +40,8 @@ GMM_GETINFO_CHUNK = 4000
 VECTOR_SCALE = 40
 AREA_SCALE = 20
 BUILDING_OUTLINES_PATH = "data/nz-building/nz-building-outlines.shp"
+# For all of NZ export the whole LINZ layer as GeoPackage to
+# data/nz-building/nz-building-outlines.gpkg (found automatically; WGS84 or NZTM2000).
 # "auto" = LINZ if the file above exists, else OpenStreetMap buildings (global).
 # "linz" | "osm" | "none" force one source or switch building exposure off.
 BUILDING_SOURCE = "auto"
