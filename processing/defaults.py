@@ -17,7 +17,9 @@ load_dotenv(Path(__file__).resolve().parents[1] / ".env")
 GEE_PROJECT = os.environ.get("EE_PROJECT", "geog761-dongwook")
 
 SLOPE_MAX_DEG = 10
-ELEVATION_MAX_M = 25.0
+# Absolute cap off by default (9000 m > any terrain): a fixed 25 m removed real
+# flooding on inland floodplains. ELEVATION_ABOVE_P5_M (relative cap) still applies.
+ELEVATION_MAX_M = 9000.0
 ELEVATION_ABOVE_P5_M = 20.0
 PERMANENT_WATER_OCCURRENCE = 50
 MMU_PIXELS = 8

@@ -53,9 +53,11 @@ AOI_BOUNDS = aoi_bounds()
 
 
 SLOPE_MAX_DEG = 10                # exclude steep terrain: flood-implausible, layover/shadow-prone
-ELEVATION_MAX_M = 25.0            # exclude pixels at/above this DEM height (metres)
+# Absolute cap off by default (9000 m > any terrain); a fixed 25 m suited coastal
+# AOIs only and removed real flooding inland. The relative cap below still applies.
+ELEVATION_MAX_M = 9000.0          # exclude pixels at/above this DEM height (metres)
 # Extra relative cap: also drop if elevation > (AOI 5th-percentile DEM + this).
-# Set to None to use only ELEVATION_MAX_M.
+# Keep this set: with ELEVATION_MAX_M at 9000 it is the only elevation limit.
 ELEVATION_ABOVE_P5_M = 20.0
 PERMANENT_WATER_OCCURRENCE = 50   # JRC Global Surface Water % occurrence -> "permanent" water
 MMU_PIXELS = 8                    # minimum mapping unit, connected pixels at WORKING_SCALE
