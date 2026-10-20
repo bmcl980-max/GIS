@@ -7,7 +7,9 @@ official NZTA or council closure list.
 from __future__ import annotations
 
 import textwrap
-from typing import Any
+import threading
+import time
+from typing import Any, Callable
 
 import geopandas as gpd
 import pandas as pd
@@ -70,6 +72,53 @@ _OVERPASS_URLS = (
     "https://overpass-api.de/api",
     "https://overpass.kumi.systems/api",
 )
+# Try order: main server, mirror, then the main server once more after a pause.
+_OVERPASS_ATTEMPTS = (_OVERPASS_URLS[0], _OVERPASS_URLS[1], _OVERPASS_URLS[0])
+_OVERPASS_TIMEOUT_S = 120
+_OVERPASS_RETRY_PAUSE_S = 5
+# Public Overpass servers limit concurrent requests per user, and osmnx settings
+# are global. Roads and buildings therefore run one at a time behind this lock.
+_OVERPASS_LOCK = threading.Lock()
+
+
+def overpass_call(fn: Callable[[], Any], what: str) -> Any:
+    """Run ``fn`` (an osmnx download) against each Overpass server in turn.
+
+    ``InsufficientResponseError`` (nothing mapped in the AOI) is re-raised at once
+    so the caller can treat it as an empty result.
+    """
+    import osmnx as ox
+
+    with _OVERPASS_LOCK:
+        ox.settings.use_cache = True
+        ox.settings.requests_timeout = _OVERPASS_TIMEOUT_S
+        # Skip osmnx's slot-wait; the attempt list and lock handle pacing instead.
+        ox.settings.overpass_rate_limit = False
+        last_exc: Exception | None = None
+        for i, url in enumerate(_OVERPASS_ATTEMPTS):
+            if i:
+                time.sleep(_OVERPASS_RETRY_PAUSE_S)
+            ox.settings.overpass_url = url
+            try:
+                return fn()
+            except Exception as exc:  # noqa: BLE001 — try the next server
+                if type(exc).__name__ == "InsufficientResponseError":
+                    raise
+                last_exc = exc
+    raise RuntimeError(f"OSM Overpass failed for {what}: {type(last_exc).__name__}: {last_exc}") from last_exc
+
+
+def short_osm_error(exc: BaseException | str | None) -> str:
+    """One readable line for figures; full text stays in run metadata."""
+    text = str(exc or "")
+    if "Timeout" in text or "timed out" in text:
+        return "OpenStreetMap server timed out. Try the run again in a few minutes."
+    if "429" in text or "Too Many Requests" in text:
+        return "OpenStreetMap server busy (rate limit). Try again in a few minutes."
+    if "ConnectionError" in text or "Max retries" in text:
+        return "Could not reach the OpenStreetMap server (check the internet connection)."
+    first = text.splitlines()[0] if text else "unknown error"
+    return first[:160]
 
 
 def fetch_osm_drive_edges(bounds: list[float]) -> tuple[Any, gpd.GeoDataFrame]:
@@ -77,30 +126,16 @@ def fetch_osm_drive_edges(bounds: list[float]) -> tuple[Any, gpd.GeoDataFrame]:
     import osmnx as ox
 
     west, south, east, north = bounds
-    bbox = (west, south, east, north)
-    ox.settings.use_cache = True
-    ox.settings.requests_timeout = 180
-    # Skip the Overpass slot-wait; retry the next mirror on 429/timeout instead.
-    ox.settings.overpass_rate_limit = False
-    last_exc: Exception | None = None
-    for url in _OVERPASS_URLS:
-        ox.settings.overpass_url = url
+
+    def _download():
         try:
-            try:
-                graph = ox.graph_from_bbox(bbox, network_type="drive", simplify=True)
-            except TypeError:
-                graph = ox.graph_from_bbox(
-                    north, south, east, west, network_type="drive", simplify=True
-                )
-            _nodes, edges = ox.graph_to_gdfs(
-                graph, nodes=True, edges=True, fill_edge_geometry=True
-            )
-            return graph, edges.reset_index()
-        except Exception as exc:  # noqa: BLE001 — try the next Overpass mirror
-            last_exc = exc
-    raise RuntimeError(
-        f"OSM Overpass failed for bbox {bbox}: {type(last_exc).__name__}: {last_exc}"
-    ) from last_exc
+            graph = ox.graph_from_bbox((west, south, east, north), network_type="drive", simplify=True)
+        except TypeError:  # osmnx 1.x signature
+            graph = ox.graph_from_bbox(north, south, east, west, network_type="drive", simplify=True)
+        _nodes, edges = ox.graph_to_gdfs(graph, nodes=True, edges=True, fill_edge_geometry=True)
+        return graph, edges.reset_index()
+
+    return overpass_call(_download, "roads")
 
 
 def empty_road_stats() -> dict[str, Any]:

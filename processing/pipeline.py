@@ -67,7 +67,7 @@ from processing.buildings import (
     intersect_buildings_with_flood,
     load_buildings,
 )
-from processing.roads import classify_roads_with_flood, draw_roads_panel, fetch_osm_drive_edges
+from processing.roads import classify_roads_with_flood, draw_roads_panel, fetch_osm_drive_edges, short_osm_error
 from processing.s1_tracks import choose_track, filter_track
 
 
@@ -869,6 +869,7 @@ def run_flood_mapping(
             roads_open = None
             road_stats: dict[str, Any] | None = None
             meta_road_error = None
+            meta_road_error_detail = None
             try:
                 osm_graph, osm_edges = osm_fut.result()
                 _ground, roads_closed, roads_open, road_stats = classify_roads_with_flood(
@@ -876,7 +877,8 @@ def run_flood_mapping(
                 )
                 stats.update(road_stats)
             except Exception as road_exc:  # noqa: BLE001 — OSM/Overpass must not fail the flood run
-                meta_road_error = f"{type(road_exc).__name__}: {road_exc}"
+                meta_road_error_detail = f"{type(road_exc).__name__}: {road_exc}"
+                meta_road_error = short_osm_error(meta_road_error_detail)
                 roads_closed = None
                 roads_open = None
                 road_stats = None
@@ -940,6 +942,8 @@ def run_flood_mapping(
             "elevation_max_m": req.elevation_max_m,
             "notebook_equivalent": "notebooks/01_sentinel1_layer.ipynb",
             "osm_road_error": meta_road_error,
+            "osm_road_error_detail": meta_road_error_detail,
+            "buildings_note": buildings_note,
         }
         html_report = None
         analysis, implications, uncertainties, conclusion = _report_section_flags()

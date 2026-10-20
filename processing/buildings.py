@@ -49,28 +49,23 @@ def fetch_osm_buildings(bounds: list[float]) -> gpd.GeoDataFrame:
     """
     import osmnx as ox
 
-    from processing.roads import _OVERPASS_URLS
+    from processing.roads import overpass_call
 
     west, south, east, north = bounds
-    ox.settings.use_cache = True
-    ox.settings.requests_timeout = 180
-    ox.settings.overpass_rate_limit = False
     tags = {"building": True}
-    last_exc: Exception | None = None
-    for url in _OVERPASS_URLS:
-        ox.settings.overpass_url = url
+
+    def _download():
         try:
-            try:
-                gdf = ox.features_from_bbox((west, south, east, north), tags=tags)
-            except TypeError:  # osmnx 1.x signature
-                gdf = ox.features_from_bbox(north, south, east, west, tags=tags)
-            break
-        except Exception as exc:  # noqa: BLE001 — empty AOI or mirror failure
-            if type(exc).__name__ == "InsufficientResponseError":
-                return gpd.GeoDataFrame(geometry=[], crs=WGS84)
-            last_exc = exc
-    else:
-        raise RuntimeError(f"OSM Overpass failed for buildings: {type(last_exc).__name__}: {last_exc}")
+            return ox.features_from_bbox((west, south, east, north), tags=tags)
+        except TypeError:  # osmnx 1.x signature
+            return ox.features_from_bbox(north, south, east, west, tags=tags)
+
+    try:
+        gdf = overpass_call(_download, "buildings")
+    except Exception as exc:  # noqa: BLE001
+        if type(exc).__name__ == "InsufficientResponseError":
+            return gpd.GeoDataFrame(geometry=[], crs=WGS84)
+        raise
 
     gdf = gdf[gdf.geometry.geom_type.isin(["Polygon", "MultiPolygon"])]
     gdf = gdf.reset_index()
@@ -105,7 +100,9 @@ def load_buildings(
     try:
         return fetch_osm_buildings(bounds), "OSM", None
     except Exception as exc:  # noqa: BLE001 — Overpass must not fail the flood run
-        return None, "OSM", f"OSM buildings unavailable: {type(exc).__name__}: {exc}"
+        from processing.roads import short_osm_error
+
+        return None, "OSM", f"OSM buildings unavailable.\n{short_osm_error(exc)}"
 
 
 def fc_payload_to_gdf(payload: dict | list | None) -> gpd.GeoDataFrame:
