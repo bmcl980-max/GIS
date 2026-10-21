@@ -359,12 +359,19 @@ def _add_landcover_legend(ax) -> None:
 
 
 def _ee_thumb_array(image: ee.Image, vis: dict | None, region: ee.Geometry, dimensions: int) -> np.ndarray:
+    """EE thumbnail as an array; halves the size if EE refuses (time/memory limits)."""
+    from urllib.error import HTTPError
+
     vis_img = image if vis is None else image.visualize(**vis)
-    url = vis_img.getThumbURL(
-        {"region": region, "dimensions": dimensions, "format": "png", "crs": "EPSG:4326"}
-    )
-    with urlopen(url) as resp:
-        return np.array(Image.open(io.BytesIO(resp.read())))
+    last: Exception | None = None
+    for dims in (dimensions, max(dimensions // 2, 256)):
+        url = vis_img.getThumbURL({"region": region, "dimensions": dims, "format": "png", "crs": "EPSG:4326"})
+        try:
+            with urlopen(url) as resp:
+                return np.array(Image.open(io.BytesIO(resp.read())))
+        except HTTPError as err:
+            last = RuntimeError(f"Earth Engine thumbnail refused ({err.code}): {err.read().decode(errors='ignore')[:300]}")
+    raise last  # type: ignore[misc]
 
 
 def _add_flood_legend(ax) -> None:
