@@ -634,6 +634,12 @@ def run_flood_mapping(
             return filter_track(col, track)
 
         co_col = same_track(co_col)
+        if track["matched"]:
+            # Event image = the single pass nearest the peak (all its slices), not an
+            # average of every pass in the window, which would dilute the flood with
+            # earlier or later (drained) acquisitions.
+            t_peak = ee.Image(co_col.filter(ee.Filter.eq("system:index", closest_id)).first()).date()
+            co_col = co_col.filterDate(t_peak.advance(-1, "hour"), t_peak.advance(1, "hour"))
         n_co = int(co_col.size().getInfo())
 
         def mask_s2_clouds(image: ee.Image) -> ee.Image:
@@ -676,8 +682,10 @@ def run_flood_mapping(
         terrain_gain = slope_rad.cos().max(0.1).unmask(1)
 
         def build_composite(col: ee.ImageCollection) -> ee.Image:
-            natural_mean = to_natural(col.select(["VV", "VH"]).mean()).clip(aoi)
-            filtered = lee_filter(natural_mean)
+            # Per-pixel median (robust to wet months, earlier floods and bright outliers).
+            # S1_GRD is in dB; the median is order-preserving, so median(dB) = dB(median).
+            natural_median = to_natural(col.select(["VV", "VH"]).median()).clip(aoi)
+            filtered = lee_filter(natural_median)
             flattened = filtered.divide(terrain_gain)
             return to_db(flattened).rename(["VV", "VH"])
 

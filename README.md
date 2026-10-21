@@ -2,7 +2,7 @@
 
 GEOG761 group project: mapping **flood and inundation extent** after a disaster, as the entry point for choosing a sea-logistics / HA-DR site.
 
-The Sentinel-1 notebook (`01_sentinel1_layer.ipynb`) is the method of record. The map UI uses calendar dates and a Leaflet AOI, without editing `layer_config.py` for coordinates or dates. Flood is an **unsupervised 2-D GMM** cluster on event `WI` and historical `ΔWI` (dark **and** newly darker than a one-year same-track mean). That replaces the earlier 1-D **Otsu** cut on WI plus a fixed `ΔWI` dB threshold.
+The Sentinel-1 notebook (`01_sentinel1_layer.ipynb`) is the method of record. The map UI uses calendar dates and a Leaflet AOI, without editing `layer_config.py` for coordinates or dates. Flood is an **unsupervised 2-D GMM** cluster on event `WI` and historical `ΔWI` (dark **and** newly darker than a one-year same-track median). That replaces the earlier 1-D **Otsu** cut on WI plus a fixed `ΔWI` dB threshold.
 
 ---
 
@@ -35,7 +35,7 @@ Selecting a suitable site for logistics supply from sea, immediately following a
 | Input                            | Collection / product                                                                                                                              | Role                                                                                                                        |
 | -------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------- |
 | Sentinel-1 event stack           | `COPERNICUS/S1_GRD` IW, 10 m, `START_DATE`–`END_DATE`                                                                                             | Event composite; `WI_event = VV_dB + VH_dB`                                                                                 |
-| Sentinel-1 historical stack      | Same collection, `HIST_LOOKBACK_YEARS` ending at `START_DATE`                                                                                     | Mean WI before the event (`WI_hist`). Event window is excluded                                                              |
+| Sentinel-1 historical stack      | Same collection, `HIST_LOOKBACK_YEARS` ending at `START_DATE`                                                                                     | Median WI before the event (`WI_hist`). Event window is excluded                                                              |
 | FABDEM (bare-earth DEM)          | `projects/sat-io/open-datasets/FABDEM`                                                                                                            | Elevation, slope, sea (nodata). GLO-30 with buildings/trees removed                                                         |
 | ESA WorldCover 2021              | `ESA/WorldCover/v200/2021`                                                                                                                        | Permanent water (class 80); optional dark-land classes 50/60 (runways)                                                      |
 | JRC Global Surface Water         | `JRC/GSW1_4/GlobalSurfaceWater` `occurrence`                                                                                                      | Permanent / frequent water                                                                                                  |
@@ -48,7 +48,7 @@ Selecting a suitable site for logistics supply from sea, immediately following a
 **How a pixel becomes flood**
 
 1. **Prep** — clip to a rectangular AOI; convert dB → linear power; Lee speckle filter; simplified cosine terrain flatten; back to dB. The **same** recipe is applied to the event stack and to the historical stack.
-2. **Features** — dual-pol index `WI = VV_dB + VH_dB`. Historical change `ΔWI = WI_hist − WI_event` (positive = newly darker than the lookback mean). Always-dark water and pavement stay near `ΔWI ≈ 0`.
+2. **Features** — dual-pol index `WI = VV_dB + VH_dB`. Historical change `ΔWI = WI_hist − WI_event` (positive = newly darker than the lookback median). Always-dark water and pavement stay near `ΔWI ≈ 0`.
 3. **Unsupervised 2-D GMM / k-means** — this step **replaces Otsu**. Standardise (`WI`, `ΔWI`); sample AOI pixels with permanent water excluded so the sea does not dominate the fit; fit a **4-component GMM** (`sklearn.mixture.GaussianMixture`, full covariance) and **k-means** on the same samples. Flood is the component with the **highest score `ΔWI/σ(ΔWI) − WI_z` among those with positive mean ΔWI** (dark and strongly darkened). Permanent dark water sits at low WI and `ΔWI ≈ 0`; dry land is brighter. GMM is the map; k-means is comparison only. There is no WI histogram threshold and no `WI_CHANGE_MIN_DB` cut.
 4. **Flood candidate** — GMM flood cluster, then drop WorldCover 80, JRC occurrence ≥ threshold, DEM nodata (open sea), and optional WorldCover 50/60. WorldCover / JRC / DEM are **post-masks**, not GMM features.
 5. **Terrain** — drop high ground: more than `ELEVATION_ABOVE_P5_M` (20 m) above the AOI's 5th-percentile FABDEM elevation, plus an absolute `ELEVATION_MAX_M` cap that is off by default (9000 m; the earlier fixed 25 m removed genuine inland flooding) and slopes steeper than `SLOPE_MAX_DEG`; layover/shadow *risk proxy* from slope vs incidence angle. Elevation is **FABDEM** (bare earth), not raw Copernicus GLO-30 (DSM with buildings/trees).
@@ -321,7 +321,7 @@ flowchart TD
 
 
 
-**Logical proposition:** flood = 2-D GMM cluster on (`WI_event`, `ΔWI`) that is dark and newly darker than the historical mean, minus permanent water, on low / flat ground.
+**Logical proposition:** flood = 2-D GMM cluster on (`WI_event`, `ΔWI`) that is dark and newly darker than the historical median, minus permanent water, on low / flat ground.
 
 **Event trigger (pitch context):** MetService / news. Implementation will start from a user-selected AOI and date range rather than a live alert feed.
 
@@ -434,7 +434,7 @@ Jobs usually take **several minutes**. `--reload` picks up Python changes; refre
 
 **Product**
 
-- A map of flood and inundation extent for a chosen AOI and **event** date range, from an unsupervised 2-D GMM on Sentinel-1 (`WI`, `ΔWI`) versus a multi-year historical mean (optional Sentinel-2 RGB for context).
+- A map of flood and inundation extent for a chosen AOI and **event** date range, from an unsupervised 2-D GMM on Sentinel-1 (`WI`, `ΔWI`) versus a one-year same-track historical median (optional Sentinel-2 RGB for context).
 - A notebook or GitHub repository containing the code.
 - Run on past flood events to show the method works.
 - A partner can adapt it to their own SAR data.
@@ -454,7 +454,7 @@ Jobs usually take **several minutes**. `--reload` picks up Python changes; refre
 | Sentinel-2 pixel ML, spectral indices (e.g. NDWI), Random Forest | Lecture 2, Lab 2                              |
 | Cloud-cleared Sentinel-2 composite                               | Lab 3                                         |
 | Sentinel-1 land vs water (VV/VH, RF, speckle `focal_mean`)       | Lecture 6 (same exercise in Lecture 8)        |
-| Event WI vs historical mean WI; 2-D GMM / k-means flood cluster  | Project novelty (not a 761 exercise)          |
+| Event WI vs historical median WI; 2-D GMM / k-means flood cluster  | Project novelty (not a 761 exercise)          |
 | Optional U-Net surface water on 6-band Sentinel-2                | Lab 5 (deep learning idea: Lecture 5 / Lab 4) |
 | DEM keep low / flat pixels                                       | Extra GIS prior (not a 761 exercise)          |
 | LINZ building outlines ∩ flood (exposure count)                  | Project novelty (vector overlay)              |
