@@ -68,6 +68,7 @@ from processing.buildings import (
 )
 from processing.roads import classify_roads_with_flood, draw_roads_panel, fetch_osm_drive_edges, short_osm_error
 from processing.s1_tracks import choose_track, filter_track
+from processing.s1_preprocess import composite_db, terrain_geometry
 from processing.map_furniture import FLOOD_COLOR, FLOOD_LABEL, add_north_arrow, add_scale_bar
 
 
@@ -147,33 +148,7 @@ def ensure_ee() -> None:
     _ee_ready = True
 
 
-def to_natural(img: ee.Image) -> ee.Image:
-    return ee.Image(10.0).pow(img.divide(10.0))
-
-
-def to_db(img: ee.Image) -> ee.Image:
-    return img.max(1e-10).log10().multiply(10.0)
-
-
-def lee_filter_band(band_img: ee.Image, radius: int = 1, enl: float = cfg.SENTINEL1_ENL) -> ee.Image:
-    names = band_img.bandNames()
-    kernel = ee.Kernel.square(radius=radius, units="pixels")
-    mean = band_img.reduceNeighborhood(ee.Reducer.mean(), kernel).rename(names)
-    variance = band_img.reduceNeighborhood(ee.Reducer.variance(), kernel).rename(names)
-    ci = variance.sqrt().divide(mean.max(1e-6))
-    cu = enl ** -0.5
-    weight = (
-        ee.Image(1)
-        .subtract(ee.Image(cu * cu).divide(ci.multiply(ci).max(1e-6)))
-        .clamp(0, 1)
-    )
-    return mean.add(weight.multiply(band_img.subtract(mean)))
-
-
-def lee_filter(image: ee.Image, radius: int = 1, enl: float = cfg.SENTINEL1_ENL) -> ee.Image:
-    return ee.Image.cat(
-        [lee_filter_band(image.select([b]), radius, enl).rename(b) for b in ["VV", "VH"]]
-    )
+# dB/linear conversion, Lee filter and terrain flattening: processing/s1_preprocess.py
 
 
 def _fc_props_to_array(fc: ee.FeatureCollection, props: list[str], chunk: int) -> np.ndarray:
@@ -678,20 +653,16 @@ def run_flood_mapping(
         ocean_no_dem = dem.mask().Not().unmask(1)
         permanent_water = gsw_permanent.Or(wc_water).Or(ocean_no_dem).rename("permanent_water")
 
-        slope_rad = slope_deg.multiply(3.141592653589793 / 180.0)
-        terrain_gain = slope_rad.cos().max(0.1).unmask(1)
+        # Per scene: Lee filter + angular terrain flattening (Vollrath et al. 2020,
+        # volume model, with geometric layover/shadow mask); then per-pixel median.
+        # processing/s1_preprocess.py, shared with notebooks 01 and 04.
+        tf_slope, tf_phi_s = terrain_geometry(aoi)
 
         def build_composite(col: ee.ImageCollection) -> ee.Image:
-            # Per-pixel median (robust to wet months, earlier floods and bright outliers).
-            # S1_GRD is in dB; the median is order-preserving, so median(dB) = dB(median).
-            natural_median = to_natural(col.select(["VV", "VH"]).median()).clip(aoi)
-            filtered = lee_filter(natural_median)
-            flattened = filtered.divide(terrain_gain)
-            return to_db(flattened).rename(["VV", "VH"])
+            return composite_db(col, aoi, tf_slope, tf_phi_s, enl=cfg.SENTINEL1_ENL)
 
-        report(5, "Lee speckle filter and terrain flattening")
+        report(5, "Per-scene Lee filter and terrain flattening")
         co_db = build_composite(co_col)
-        co_angle = co_col.select("angle").mean().clip(aoi)
 
         water_index = co_db.select("VV").add(co_db.select("VH")).rename("WI")
 
@@ -739,9 +710,9 @@ def run_flood_mapping(
             elev_ok = elev_ok.And(dem.lte(rel_max).unmask(1)).rename("elev_ok")
 
         slope_ok = slope_deg.lt(req.slope_max_deg).unmask(1).rename("slope_ok")
-        layover_risk = slope_deg.gt(co_angle)
-        shadow_risk = slope_deg.gt(ee.Image(90).subtract(co_angle))
-        layover_shadow_risk = layover_risk.Or(shadow_risk).unmask(0).rename("layover_shadow_risk")
+        # Active layover/shadow from the terrain-flattening geometry: those pixels are
+        # masked in the composite, so treat "no data" as excluded.
+        layover_shadow_risk = co_db.select("VV").mask().Not().rename("layover_shadow_risk")
         flood_masked = (
             flood_candidate.And(elev_ok).And(slope_ok).And(layover_shadow_risk.Not()).rename("flood_masked")
         )

@@ -47,11 +47,11 @@ Selecting a suitable site for logistics supply from sea, immediately following a
 
 **How a pixel becomes flood**
 
-1. **Prep** — clip to a rectangular AOI; convert dB → linear power; Lee speckle filter; simplified cosine terrain flatten; back to dB. The **same** recipe is applied to the event stack and to the historical stack.
+1. **Prep (per scene, `processing/s1_preprocess.py`)** — dB → linear power; Lee speckle filter (3×3, ENL 4.9) on **each scene**; angular-based radiometric terrain flattening to γ⁰ (Vollrath et al. 2020, volume model, as in the GEE S1 ARD framework of Mullissa et al. 2021) using FABDEM slope/aspect, satellite look direction and incidence angle, with **active layover/shadow masked** from that geometry; then the **per-pixel median** (event: slices of the single peak pass; baseline: one year on the same track), back to dB. Event and baseline get identical processing.
 2. **Features** — dual-pol index `WI = VV_dB + VH_dB`. Historical change `ΔWI = WI_hist − WI_event` (positive = newly darker than the lookback median). Always-dark water and pavement stay near `ΔWI ≈ 0`.
 3. **Unsupervised 2-D GMM / k-means** — this step **replaces Otsu**. Standardise (`WI`, `ΔWI`); sample AOI pixels with permanent water excluded so the sea does not dominate the fit; fit a **4-component GMM** (`sklearn.mixture.GaussianMixture`, full covariance) and **k-means** on the same samples. Flood is the component with the **highest score `ΔWI/σ(ΔWI) − WI_z` among those with positive mean ΔWI** (dark and strongly darkened). Permanent dark water sits at low WI and `ΔWI ≈ 0`; dry land is brighter. GMM is the map; k-means is comparison only. There is no WI histogram threshold and no `WI_CHANGE_MIN_DB` cut.
 4. **Flood candidate** — GMM flood cluster, then drop WorldCover 80, JRC occurrence ≥ threshold, DEM nodata (open sea), and optional WorldCover 50/60. WorldCover / JRC / DEM are **post-masks**, not GMM features.
-5. **Terrain** — drop high ground: more than `ELEVATION_ABOVE_P5_M` (20 m) above the AOI's 5th-percentile FABDEM elevation, plus an absolute `ELEVATION_MAX_M` cap that is off by default (9000 m; the earlier fixed 25 m removed genuine inland flooding) and slopes steeper than `SLOPE_MAX_DEG`; layover/shadow *risk proxy* from slope vs incidence angle. Elevation is **FABDEM** (bare earth), not raw Copernicus GLO-30 (DSM with buildings/trees).
+5. **Terrain** — drop high ground: more than `ELEVATION_ABOVE_P5_M` (20 m) above the AOI's 5th-percentile FABDEM elevation, plus an absolute `ELEVATION_MAX_M` cap that is off by default (9000 m; the earlier fixed 25 m removed genuine inland flooding) and slopes steeper than `SLOPE_MAX_DEG`; active layover/shadow pixels are already masked by the terrain-flattening geometry (step 1). Elevation is **FABDEM** (bare earth), not raw Copernicus GLO-30 (DSM with buildings/trees).
 6. **Clean** — minimum mapping unit, then a small morphological opening.
 7. **Vectorise** — `final_flood` → `flood_boundary` polygons (`reduceToVectors`, 40 m, eight-connected).
 8. **Building exposure** — LINZ outlines (NZ) or OSM buildings (anywhere) ∩ `flood_boundary` (see below).
@@ -233,7 +233,7 @@ For these reasons, the silt RF is retained as a discussion experiment only. Usef
 
 The notebook (`01_sentinel1_layer.ipynb`) is the lab-style reference. Flood is the GMM cluster on (`WI`, `ΔWI`); k-means is fitted on the same samples for comparison only.
 
-Two Sentinel-1 stacks share one AOI and the same Lee / terrain-flatten steps:
+Two Sentinel-1 stacks share one AOI and the same per-scene Lee / terrain-flattening steps:
 
 
 | Stack      | Date filter                                       | Role                                                   |
@@ -258,7 +258,7 @@ flowchart TD
   end
   subgraph PRE["Prep (same for both stacks)"]
     CLIP["Clip rectangular AOI"]
-    LEE["dB to linear / Lee speckle / cosine flatten / dB"]
+    LEE["per scene: dB to linear / Lee speckle / terrain flattening + layover-shadow mask; median; dB"]
   end
   subgraph WTR["2-D unsupervised cluster"]
     WI["WI_event = VV_dB + VH_dB"]
@@ -273,7 +273,7 @@ flowchart TD
     CAND["flood_candidate = gmm_flood minus permanent minus dark land"]
     ELEV["elev_ok: below ELEVATION_MAX_M and p5 plus delta"]
     SLP["slope_ok: below SLOPE_MAX_DEG"]
-    LAY["layover/shadow risk proxy"]
+    LAY["layover/shadow mask (terrain-flattening geometry)"]
     MMU["MMU then morphological opening"]
   end
   subgraph OUT["Outputs"]
@@ -392,7 +392,7 @@ These controls are sent with `POST /api/run`. They replace the notebook’s `STA
 | Max elevation (m) | `elevation_max_m`                | 25                                    | Drop flood candidates at or above this FABDEM height. A second relative cap (`ELEVATION_ABOVE_P5_M`) still applies in the backend |
 
 
-**Progress steps (shown under the button):** (1) initialise Earth Engine, (2) search Sentinel-1, (3) Sentinel-2 RGB, (4) DEM / WorldCover / JRC, (5) Lee + terrain flatten, (6) water index + historical `ΔWI` + **2-D GMM flood cluster**, (7) elevation / slope / layover masks, (8) vectorise flood polygons, (9) area statistics, LINZ buildings, and OSM flood-affected roads, (10) render figure. Earth Engine is lazy, so the bar can sit on steps 6, 7 and 9 for a while (step 9 also waits on Overpass). Only **one** run at a time; a second job waits.
+**Progress steps (shown under the button):** (1) initialise Earth Engine, (2) search Sentinel-1, (3) Sentinel-2 RGB, (4) DEM / WorldCover / JRC, (5) per-scene Lee + terrain flattening, (6) water index + historical `ΔWI` + **2-D GMM flood cluster**, (7) elevation / slope / layover masks, (8) vectorise flood polygons, (9) area statistics, LINZ buildings, and OSM flood-affected roads, (10) render figure. Earth Engine is lazy, so the bar can sit on steps 6, 7 and 9 for a while (step 9 also waits on Overpass). Only **one** run at a time; a second job waits.
 
 **Optional Gemini analysis:** set any of `REPORT_ANALYSIS`, `REPORT_IMPLICATIONS`, `REPORT_UNCERTAINTIES`, `REPORT_CONCLUSION` to `True` in `processing/defaults.py` to add those HTML sections under the statistics table (needs `GEMINI_KEY` in `.env`). All `False` skips the Gemini call.
 
