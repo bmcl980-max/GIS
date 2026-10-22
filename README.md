@@ -1,4 +1,6 @@
-# ![Geographically Informed Speculators logo](assets/logo/logo.png) Geographically Informed Speculators (GIS)
+# ![FloodSat Pacific logo](assets/logo/logo.png) FloodSat Pacific
+
+**FloodSat Pacific** is a rapid Sentinel-1 flood and access mapping product for humanitarian assistance and disaster relief (HA/DR) in New Zealand and the Pacific, built for the New Zealand Defence Force (NZDF). It was developed by **Geographically Informed Speculators (GIS)** as a GEOG761 group project at Waipapa Taumata Rau – University of Auckland.
 
 GEOG761 group project: mapping **flood and inundation extent** after a disaster, as the entry point for choosing a sea-logistics / HA-DR site.
 
@@ -335,12 +337,12 @@ A local FastAPI page (`ui/`) plus Leaflet. Dates, AOI, max slope, and max elevat
 
 ### Design
 
-Dark layout, gold accent. Team name **Geographically Informed Speculators** in the header. Optional logo at `ui/static/logo.png` or `assets/logo/logo.png` (missing image is hidden).
+Dark layout, gold accent. Product name **FloodSat Pacific** in the header. Optional logo at `ui/static/logo.png` or `assets/logo/logo.png` (missing image is hidden).
 
 ```text
 ┌─────────────────────────────────────────────────────────────┐
-│  [logo]  Geographically Informed Speculators                │
-│          Flood / inundation extent · GEOG761                │
+│  [logo]  FloodSat Pacific                                   │
+│          Sentinel-1 flood and access mapping for HA/DR      │
 │  [ Sentinel-1 SAR ]  [ Sentinel-2 U-Net ]                   │
 ├──────────────────┬──────────────────────────────────────────┤
 │ Event window     │                                          │
