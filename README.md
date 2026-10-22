@@ -68,15 +68,7 @@ Code: `processing/buildings.py`, used by notebook section 5d and the UI pipeline
 
 `BUILDING_SOURCE` (`notebooks/layer_config.py`, `processing/defaults.py`) picks the footprints: `"auto"` (default) uses LINZ if the file below exists, otherwise **OpenStreetMap** `building=*` polygons fetched for the AOI through Overpass, so the product needs no local data outside NZ. `"linz"`, `"osm"` or `"none"` force one choice. The figure and `stats["buildings_source"]` record which was used. OSM completeness varies (HOT often maps buildings after disasters), so OSM counts are a minimum. Steps 1–2 below are LINZ-only; steps 3–4 apply to both.
 
-**Offline OSM roads and buildings (NZ and the Pacific).** The live Overpass server is often slow or times out. Run once from the repo root:
-
-```bash
-uv run python scripts/download_osm.py              # Pacific roads + buildings, NZ roads
-uv run python scripts/download_osm.py fiji tonga   # or just some countries
-uv run python scripts/download_osm.py --refresh    # later, to pick up new OSM edits
-```
-
-This downloads Geofabrik country extracts (© OpenStreetMap contributors, ODbL) and writes drivable road centrelines to `data/osm-roads/<country>.gpkg` and building polygons to `data/osm-buildings/<country>.gpkg` (both gitignored; NZ buildings come from LINZ). With `BUILDING_SOURCE = "auto"` buildings come from LINZ, then local OSM, then live Overpass. Roads come from the local extract when one covers the AOI, otherwise live Overpass; `stats["roads_source"]` records which. For local roads, `processing/roads.py` builds the routable network itself: centrelines are split at shared OSM nodes (junctions), one-way tags are respected, and edge lengths are in the local UTM zone, so detours work offline.
+**Local data.** Roads and buildings are read from local files first (LINZ for NZ buildings; OpenStreetMap extracts for NZ roads and for Pacific roads and buildings), and from the live Overpass server only when no local file covers the AOI. Setup steps: [Local exposure data (one-off setup)](#local-exposure-data-one-off-setup). For local roads, `processing/roads.py` builds the routable network itself: centrelines are split at shared OSM nodes (junctions), one-way tags are respected, and edge lengths are in the local UTM zone, so detours work offline. `stats["buildings_source"]` and `stats["roads_source"]` record which source each run used.
 
 1. **Download.** Export the whole *NZ Building Outlines* layer from the LINZ Data Service as a **GeoPackage** (national coverage; a shapefile export splits at 2 GB) and save it as `data/nz-building/nz-building-outlines.gpkg`, which is found automatically. A cropped shapefile at `data/nz-building/nz-building-outlines.shp` also works. WGS 84 or NZTM2000 both work: the AOI box is converted to the file's CRS before the spatial-index read, so only buildings in the AOI are loaded. LINZ data are CC BY 4.0. The path is `BUILDING_OUTLINES_PATH` in `notebooks/layer_config.py` and `processing/defaults.py`. Shapefile sidecars are gitignored.
 2. **Clip to the AOI.** `gpd.read_file(path, bbox=...)` with the AOI box in the file's CRS reads only outlines inside the AOI rectangle (the national file is large), reprojected to WGS 84. This is `buildings_in_aoi`.
@@ -409,6 +401,53 @@ These controls are sent with `POST /api/run`. They replace the notebook’s `STA
 # Copy .env.example to .env and set EE_PROJECT + GOOGLE_APPLICATION_CREDENTIALS
 # plus GEMINI_KEY if you want the HTML report.
 ```
+
+### Local exposure data (one-off setup)
+
+FloodSat Pacific maps flood from Sentinel-1 anywhere, but building and road exposure needs vector data. Download it once so runs work offline and do not depend on the public Overpass server, which is often slow or times out. Everything below lands in `data/`, which is gitignored (each user downloads their own copy). Run commands from the repo root.
+
+**1. New Zealand buildings: LINZ NZ Building Outlines** (authoritative, CC BY 4.0)
+
+1. Create a free account on the [LINZ Data Service](https://data.linz.govt.nz/) and open [NZ Building Outlines (layer 101290)](https://data.linz.govt.nz/layer/101290-nz-building-outlines/).
+2. **Export** → format **GeoPackage**, extent **the whole layer** (no crop), coordinate system NZTM2000 or WGS 84 (either works).
+3. Unzip and save the file as `data/nz-building/nz-building-outlines.gpkg`. It is found automatically; nothing to configure. (A national export is a few hundred MB; only buildings inside the AOI are read at run time.)
+
+**2. OpenStreetMap roads and buildings: New Zealand and the Pacific** (Geofabrik extracts, © OpenStreetMap contributors, ODbL)
+
+```bash
+uv run python scripts/download_osm.py
+```
+
+This downloads the Geofabrik extract for each country below and writes:
+
+- `data/osm-roads/<country>.gpkg`: drivable road centrelines (motorway to residential, as OSMnx `drive`), used for flood-affected roads and detours;
+- `data/osm-buildings/<country>.gpkg`: building polygons (Pacific countries; NZ buildings come from LINZ).
+
+| Default download | Countries and territories (Geofabrik names) | Saved |
+|---|---|---|
+| Pacific | `american-oceania`, `cook-islands`, `fiji`, `kiribati`, `marshall-islands`, `micronesia`, `nauru`, `new-caledonia`, `niue`, `palau`, `papua-new-guinea`, `pitcairn-islands`, `polynesie-francaise`, `samoa`, `solomon-islands`, `tokelau`, `tonga`, `tuvalu`, `vanuatu`, `wallis-et-futuna` | roads + buildings |
+| New Zealand | `new-zealand` | roads (largest download, a few hundred MB) |
+
+Options:
+
+```bash
+uv run python scripts/download_osm.py fiji samoa tonga   # only these countries
+uv run python scripts/download_osm.py --no-nz            # Pacific only (skip the large NZ file)
+uv run python scripts/download_osm.py --nz-buildings     # also OSM buildings for NZ (LINZ is preferred)
+uv run python scripts/download_osm.py --refresh          # re-download to pick up recent OSM edits (e.g. after a HOT mapping campaign)
+uv run python scripts/download_osm.py asia/philippines   # any other Geofabrik region, path as on download.geofabrik.de
+```
+
+Downloaded zips are cached in `data/raw/osm/` and reused unless `--refresh` is given. The script ends with `Done. N of N ok`; any country listed as `FAILED` can be re-run on its own. A `SOURCE.txt` in each output folder records the download date and licence for attribution.
+
+**3. What is used at run time**
+
+| Layer | Order tried |
+|---|---|
+| Buildings (`BUILDING_SOURCE = "auto"`) | LINZ file (if it has buildings in the AOI) → local OSM extracts → live Overpass |
+| Roads | local OSM extract (if it covers the AOI) → live Overpass |
+
+Outside New Zealand and the Pacific (e.g. Australia, which Geofabrik does not offer as a GeoPackage, or Asia unless downloaded as above), exposure falls back to live Overpass; if that times out, the flood map is still produced and the figure says which layer was unavailable.
 
 **Start the server** (from the repo root):
 
