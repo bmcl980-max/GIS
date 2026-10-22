@@ -24,7 +24,7 @@ load_dotenv(_REPO_ROOT / ".env")
 DEFAULT_MODEL = os.environ.get("GEMINI_MODEL", "gemini-2.5-flash")
 
 _SYSTEM = """You are an analyst for a GEOG761 HA-DR (humanitarian assistance /
-disaster relief) project, team Geographically Informed Speculators.
+disaster relief) product, FloodSat Pacific (team Geographically Informed Speculators).
 
 Task: ANALYSE the attached flood figure together with the stats/meta JSON.
 Do not write a caption-style description of “what the panels show”. Use the
