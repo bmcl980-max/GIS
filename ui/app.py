@@ -28,7 +28,7 @@ LOGO_CANDIDATES = [
     REPO_ROOT / "assets" / "logo" / "logo.jpg",
 ]
 
-app = FastAPI(title="Geographically Informed Speculators", version="0.1.0")
+app = FastAPI(title="FloodSat Pacific", version="0.1.0")
 
 _jobs: dict[str, dict[str, Any]] = {}
 _jobs_lock = threading.Lock()

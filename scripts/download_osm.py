@@ -21,6 +21,8 @@ Usage (from the repo root):
     uv run python scripts/download_osm.py --no-nz         # Pacific only
     uv run python scripts/download_osm.py --nz-buildings  # also OSM buildings for NZ
     uv run python scripts/download_osm.py --refresh       # re-download newer extracts
+    uv run python scripts/download_osm.py asia/philippines # any other Geofabrik region
+                                                          # (path as on download.geofabrik.de)
 
 Re-run with --refresh to pick up recent OSM edits (e.g. after a HOT mapping campaign).
 """
@@ -153,19 +155,39 @@ def _write_buildings(slug: str, gpkgs: list[Path]) -> None:
     print(f"  buildings: {len(gdf):,} polygons -> {out.relative_to(REPO)}")
 
 
+def _url(slug: str) -> str:
+    """Pacific short names use the australia-oceania folder; 'region/country' paths are used as given."""
+    if "/" in slug:
+        return f"https://download.geofabrik.de/{slug.strip('/')}-latest-free.gpkg.zip"
+    return BASE.format(slug=slug)
+
+
 def process(slug: str, roads: bool, buildings: bool, refresh: bool) -> None:
+    from urllib.error import HTTPError
+
     print(f"{slug}:")
+    url = _url(slug)
+    slug = slug.strip("/").replace("/", "_")  # file-safe name for outputs
     zpath = RAW_DIR / f"{slug}-latest-free.gpkg.zip"
-    _download(BASE.format(slug=slug), zpath, refresh)
+    try:
+        _download(url, zpath, refresh)
+    except HTTPError as err:
+        if err.code != 404:
+            raise
+        # Some Geofabrik regions only offer the free shapefile bundle.
+        url = url.replace(".gpkg.zip", ".shp.zip")
+        zpath = RAW_DIR / f"{slug}-latest-free.shp.zip"
+        print("  no GeoPackage extract; using the shapefile bundle")
+        _download(url, zpath, refresh)
     unpacked = RAW_DIR / slug
     if unpacked.exists():
         shutil.rmtree(unpacked)
     with zipfile.ZipFile(zpath) as zf:
         zf.extractall(unpacked)
     try:
-        gpkgs = sorted(unpacked.rglob("*.gpkg"))
+        gpkgs = sorted(unpacked.rglob("*.gpkg")) or sorted(unpacked.rglob("*.shp"))
         if not gpkgs:
-            raise RuntimeError(f"no .gpkg inside {zpath.name}")
+            raise RuntimeError(f"no .gpkg or .shp inside {zpath.name}")
         if roads:
             _write_roads(slug, gpkgs)
         if buildings:
